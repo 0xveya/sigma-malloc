@@ -1,0 +1,12 @@
+app
+app-dev
+tests
+*.o
+*.out
+
+compile_commands.json
+.bear-fingerprints/
+.clangd/
+
+*.swp
+*.swo
