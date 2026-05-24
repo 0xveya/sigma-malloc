@@ -30,7 +30,9 @@ clang -std=c23 \
       -ggdb -O0 \
       $(find . -name '*.c' | grep -v 'test.c') \
       -o app-dev \
-      -lBlocksRuntime
+      -lBlocksRuntime \
+      -DHORNY_MODE=1 \
+      -DNO_LEAK_REWARD=1
 """
 
 [tasks.test]

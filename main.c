@@ -7,7 +7,10 @@ int main(void) {
   if (!lol) {
     exit(67);
   }
-  printf("%d\n", lol[i]);
-}
-return 0;
+  defer { cock(lol); };
+  for (int i = 0; i < 10; i++) {
+    lol[i] = i * 67;
+    printf("%d\n", lol[i]);
+  }
+  return 0;
 }

@@ -15,6 +15,14 @@
 #define USE_DEBUG_ALLOC 0
 #endif
 
+#ifndef NO_LEAK_REWARD
+#define NO_LEAK_REWARD 0
+#endif
+
+#ifndef HORNY_MODE
+#define HORNY_MODE 0
+#endif
+
 #define ALIGN_UP(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
 
 static const size_t g_size_classes[NUM_CACHES] = {16,  32,  64,  128,

@@ -62,18 +62,37 @@ void show_skill_issues(void) {
     }
     if (cache_leaks > 0) {
       size_t wasted_bytes = cache_leaks * cache->obj_size;
-      printf("[LEAK] Size Class %4zu bytes -> %zu object(s) left unfreed "
-             "(~%zu bytes)\n",
-             cache->obj_size, cache_leaks, wasted_bytes);
+      fprintf(stderr,
+              "[LEAK] Size Class %4zu bytes -> %zu object(s) left unfreed "
+              "(~%zu bytes)\n",
+              cache->obj_size, cache_leaks, wasted_bytes);
 
       leaks_count++;
     }
   }
 
   if (leaks_count > 0) {
-    printf("leaks: %zu \n", leaks_count);
+    if (HORNY_MODE == 0) {
+      fprintf(stderr, "leaks: %zu \n", leaks_count);
+    } else {
+      fprintf(stderr, "you were a leaky bottom and leaked %zu times\n",
+              leaks_count);
+    }
   } else {
-    printf("no leaks good girl\n");
+    switch (NO_LEAK_REWARD) {
+    case 0:
+      fprintf(stderr, "no leaks\n");
+      break;
+    case 1:
+      fprintf(stderr, "no leaks good girl\n");
+      break;
+    case 2:
+      fprintf(stderr, "no leaks good enby\n");
+      break;
+    case 3:
+      fprintf(stderr, "no leaks good boy\n");
+      break;
+    }
   }
 }
 
@@ -195,7 +214,6 @@ void cock(void *pp) {
 }
 
 void *balls(size_t size) {
-  printf("size: %zu\n", size);
   if (size <= MAX_SLAB_SIZE)
     return slab_alloc(size);
 
