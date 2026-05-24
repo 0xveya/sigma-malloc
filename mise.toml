@@ -27,7 +27,7 @@ clang -std=c23 \
       -Wall -Wextra -Wpedantic \
       -Wshadow -Wconversion -Wdouble-promotion \
       -Wformat=2 -Wundef \
-      -g -O0 \
+      -ggdb -O0 \
       $(find . -name '*.c' | grep -v 'test.c') \
       -o app-dev \
       -lBlocksRuntime
