@@ -11,6 +11,10 @@
 #define MAX_SLAB_SIZE 1024
 #define NUM_CACHES 8
 
+#ifndef USE_DEBUG_ALLOC
+#define USE_DEBUG_ALLOC 0
+#endif
+
 #define ALIGN_UP(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
 
 static const size_t g_size_classes[NUM_CACHES] = {16,  32,  64,  128,
@@ -68,6 +72,7 @@ typedef struct slab {
 // global allocator
 typedef struct allocator {
   bool initialized;
+  bool is_debug;
 
   cache_t caches[NUM_CACHES];
 } allocator_t;
