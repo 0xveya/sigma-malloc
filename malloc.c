@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+[[gnu::constructor]]
 static void allocator_init(void) {
   if (g_alloc.initialized)
     return;
@@ -38,6 +39,42 @@ static cache_t *get_cache(size_t size) {
   }
 
   return NULL;
+}
+
+[[gnu::destructor]]
+void show_skill_issues(void) {
+  if (!g_alloc.initialized || !g_alloc.is_debug) {
+    return;
+  }
+  size_t leaks_count = 0;
+  for (size_t i = 0; i < NUM_CACHES; i++) {
+    cache_t *cache = &g_alloc.caches[i];
+    size_t cache_leaks = 0;
+    slab_t *current_slab = cache->partial;
+    while (current_slab) {
+      cache_leaks += current_slab->used;
+      current_slab = current_slab->next;
+    }
+    current_slab = cache->full;
+    while (current_slab) {
+      cache_leaks += current_slab->used;
+      current_slab = current_slab->next;
+    }
+    if (cache_leaks > 0) {
+      size_t wasted_bytes = cache_leaks * cache->obj_size;
+      printf("[LEAK] Size Class %4zu bytes -> %zu object(s) left unfreed "
+             "(~%zu bytes)\n",
+             cache->obj_size, cache_leaks, wasted_bytes);
+
+      leaks_count++;
+    }
+  }
+
+  if (leaks_count > 0) {
+    printf("leaks: %zu \n", leaks_count);
+  } else {
+    printf("no leaks good girl\n");
+  }
 }
 
 static slab_t *slab_create(cache_t *cache) {
@@ -158,8 +195,6 @@ void cock(void *pp) {
 }
 
 void *balls(size_t size) {
-  allocator_init();
-
   printf("size: %zu\n", size);
   if (size <= MAX_SLAB_SIZE)
     return slab_alloc(size);
