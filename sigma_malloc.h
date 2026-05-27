@@ -1,9 +1,17 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/mman.h>
 #define var auto
+
+#define ANSI_RED "\x1b[31m"
+#define ANSI_DIM "\x1b[2m"
+#define ANSI_BOLD "\x1b[1m"
+#define ANSI_RESET "\x1b[0m"
 
 #define PAGE_SIZE 4096
 #define SLAB_SIZE (PAGE_SIZE * 4)
@@ -42,6 +50,27 @@ static inline void sigma_defer_cleanup(void (^*block)(void)) {
   void (^defer_id(__LINE__))(void)                                             \
       __attribute__((cleanup(sigma_defer_cleanup))) = ^
 
+typedef enum {
+  READ_SUCCESS,
+  READ_EOF,
+  READ_IO_ERROR,
+  READ_LINE_NOT_FOUND
+} ReadStatus;
+
+// i should have the balls to use my own malloc in my malloc
+typedef struct {
+  ReadStatus status;
+  char line[1024];
+} StackLineResult;
+
+typedef struct {
+  ReadStatus status;
+  union {
+    char *line;
+    int os_errno;
+  } value;
+} ReadLineResult;
+
 typedef struct slab slab_t;
 typedef struct cache cache_t;
 
@@ -53,6 +82,11 @@ typedef struct free_node {
 // object header (stored before user pointer)
 typedef struct obj_header {
   slab_t *slab;
+  // #if USE_DEBUG_ALLOC != 2
+  const char *alloc_file;
+  const char *alloc_func;
+  int alloc_line;
+  // #endif
 } obj_header_t;
 
 // cache = one size class
@@ -85,7 +119,22 @@ typedef struct allocator {
   cache_t caches[NUM_CACHES];
 } allocator_t;
 
-static allocator_t g_alloc;
+extern allocator_t g_alloc;
 
-void *balls(size_t size);
+void *balls_backend(size_t size);
 void cock(void *pp);
+
+#define balls(size)                                                            \
+  __extension__({                                                              \
+    size_t __sz = (size);                                                      \
+    void *__ptr = balls_backend(__sz);                                         \
+                                                                               \
+    if (__ptr && g_alloc.initialized && g_alloc.is_debug) {                    \
+      obj_header_t *__hdr =                                                    \
+          (obj_header_t *)((uint8_t *)__ptr - sizeof(obj_header_t));           \
+      __hdr->alloc_file = __FILE__;                                            \
+      __hdr->alloc_func = __func__;                                            \
+      __hdr->alloc_line = __LINE__;                                            \
+    }                                                                          \
+    __ptr;                                                                     \
+  })

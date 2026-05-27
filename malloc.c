@@ -1,8 +1,7 @@
 #include "sigma_malloc.h"
-#include <stdint.h>
-#include <stdio.h>
 
-[[gnu::constructor]]
+allocator_t g_alloc = {0};
+
 static void allocator_init(void) {
   if (g_alloc.initialized)
     return;
@@ -41,33 +40,127 @@ static cache_t *get_cache(size_t size) {
   return NULL;
 }
 
+static bool is_ptr_in_freelist(free_node_t *head, void *ptr) {
+  while (head) {
+    if ((void *)head == ptr)
+      return true;
+    head = head->next;
+  }
+  return false;
+}
+
+StackLineResult get_leak_line(const char *filename, int linenum) {
+  StackLineResult result;
+  result.line[0] = '\0';
+
+  if (filename == NULL || linenum < 1) {
+    result.status = READ_IO_ERROR;
+    return result;
+  }
+
+  FILE *file = fopen(filename, "r");
+  if (file == NULL) {
+    result.status = READ_IO_ERROR;
+    return result;
+  }
+
+  int current_line = 1;
+
+  while (current_line <= linenum) {
+    if (fgets(result.line, sizeof(result.line), file) == NULL) {
+      if (feof(file)) {
+        result.status = READ_LINE_NOT_FOUND;
+      } else {
+        result.status = READ_IO_ERROR;
+      }
+      fclose(file);
+      return result;
+    }
+
+    if (current_line == linenum) {
+      break;
+    }
+
+    current_line++;
+  }
+
+  fclose(file);
+  result.status = READ_SUCCESS;
+  return result;
+}
+
 [[gnu::destructor]]
 void show_skill_issues(void) {
   if (!g_alloc.initialized || !g_alloc.is_debug) {
     return;
   }
   size_t leaks_count = 0;
+
   for (size_t i = 0; i < NUM_CACHES; i++) {
     cache_t *cache = &g_alloc.caches[i];
-    size_t cache_leaks = 0;
-    slab_t *current_slab = cache->partial;
-    while (current_slab) {
-      cache_leaks += current_slab->used;
-      current_slab = current_slab->next;
-    }
-    current_slab = cache->full;
-    while (current_slab) {
-      cache_leaks += current_slab->used;
-      current_slab = current_slab->next;
-    }
-    if (cache_leaks > 0) {
-      size_t wasted_bytes = cache_leaks * cache->obj_size;
-      fprintf(stderr,
-              "[LEAK] Size Class %4zu bytes -> %zu object(s) left unfreed "
-              "(~%zu bytes)\n",
-              cache->obj_size, cache_leaks, wasted_bytes);
+    slab_t *slabs_to_check[] = {cache->partial, cache->full};
 
-      leaks_count++;
+    for (int s_idx = 0; s_idx < 2; s_idx++) {
+      slab_t *current_slab = slabs_to_check[s_idx];
+      while (current_slab) {
+
+        uint8_t *obj_start =
+            (uint8_t *)current_slab + ALIGN_UP(sizeof(slab_t), sizeof(void *));
+        size_t data_size = ALIGN_UP(cache->obj_size, sizeof(void *));
+        size_t slot_size = sizeof(obj_header_t) + data_size;
+
+        for (size_t obj_i = 0; obj_i < current_slab->capacity; obj_i++) {
+          uint8_t *slot_ptr = obj_start + (obj_i * slot_size);
+          obj_header_t *hdr = (obj_header_t *)slot_ptr;
+          void *user_ptr = slot_ptr + sizeof(obj_header_t);
+
+          if (!is_ptr_in_freelist(current_slab->free_list, user_ptr)) {
+
+            const char *display_file = hdr->alloc_file;
+            const char *display_func = hdr->alloc_func;
+            int display_line = hdr->alloc_line;
+
+            if (hdr->alloc_file != NULL) {
+              display_file = strrchr(hdr->alloc_file, '/')
+                                 ? strrchr(hdr->alloc_file, '/') + 1
+                                 : hdr->alloc_file;
+              display_func = hdr->alloc_func;
+              display_line = hdr->alloc_line;
+            }
+            var line_result = get_leak_line(display_file, display_line);
+            if (line_result.status == READ_SUCCESS) {
+              fprintf(stderr, ANSI_RED "Memory Leak Detected" ANSI_RESET ":\n");
+              fprintf(stderr,
+                      "  " ANSI_BOLD "Size Class:" ANSI_RESET " %zu bytes\n",
+                      cache->obj_size);
+              fprintf(stderr,
+                      "  " ANSI_BOLD "Location:" ANSI_RESET "   " ANSI_DIM
+                      "%s:" ANSI_RESET "%d" ANSI_DIM ":" ANSI_RESET
+                      " inside " ANSI_BOLD "%s" ANSI_RESET "()\n",
+                      display_file, display_line, display_func);
+              fprintf(stderr, "     " ANSI_DIM "=>" ANSI_RESET " %s\n\n",
+                      line_result.line);
+
+              leaks_count++;
+            } else {
+              fprintf(stderr, ANSI_RED "Memory Leak Detected" ANSI_RESET ":\n");
+              fprintf(stderr,
+                      "  " ANSI_BOLD "Size Class:" ANSI_RESET " %zu bytes\n",
+                      cache->obj_size);
+              fprintf(stderr,
+                      "  " ANSI_BOLD "Location:" ANSI_RESET "   " ANSI_DIM
+                      "%s:" ANSI_RESET "%d" ANSI_DIM ":" ANSI_RESET
+                      " inside " ANSI_BOLD "%s" ANSI_RESET "()\n",
+                      display_file, display_line, display_func);
+              fprintf(stderr,
+                      "     " ANSI_DIM "=> (source line unavailable)\n\n");
+
+              leaks_count++;
+            }
+          }
+        }
+        current_slab = current_slab->next;
+      }
     }
   }
 
@@ -123,6 +216,9 @@ static slab_t *slab_create(cache_t *cache) {
     uint8_t *slot_ptr = obj_start + (i * slot_size);
 
     obj_header_t *hdr = (obj_header_t *)slot_ptr;
+    hdr->alloc_file = NULL;
+    hdr->alloc_func = NULL;
+    hdr->alloc_line = 0;
     hdr->slab = slab;
 
     free_node_t *node = (free_node_t *)(slot_ptr + sizeof(obj_header_t));
@@ -190,7 +286,10 @@ void cock(void *pp) {
   if (!pp)
     return;
 
-  obj_header_t *hdr = ((obj_header_t *)pp) - 1;
+  obj_header_t *hdr = (obj_header_t *)((uint8_t *)pp - sizeof(obj_header_t));
+  hdr->alloc_file = NULL;
+  hdr->alloc_func = NULL;
+  hdr->alloc_line = 0;
   slab_t *slab = hdr->slab;
   cache_t *cache = slab->owner;
 
@@ -213,7 +312,9 @@ void cock(void *pp) {
   }
 }
 
-void *balls(size_t size) {
+void *balls_backend(size_t size) {
+  if (!g_alloc.initialized)
+    allocator_init();
   if (size <= MAX_SLAB_SIZE)
     return slab_alloc(size);
 

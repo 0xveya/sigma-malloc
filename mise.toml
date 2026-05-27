@@ -32,7 +32,8 @@ clang -std=c23 \
       -o app-dev \
       -lBlocksRuntime \
       -DHORNY_MODE=1 \
-      -DNO_LEAK_REWARD=1
+      -DNO_LEAK_REWARD=1 \
+      -DUSE_DEBUG_ALLOC=1
 """
 
 [tasks.test]
