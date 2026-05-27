@@ -61,10 +61,13 @@ typedef enum {
 typedef struct {
   ReadStatus status;
   char line[1024];
+  char type[64];
 } StackLineResult;
 
 typedef struct {
   ReadStatus status;
+  char *type;
+
   union {
     char *line;
     int os_errno;

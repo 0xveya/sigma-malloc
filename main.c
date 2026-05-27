@@ -4,7 +4,6 @@
 
 int main(void) {
   var lol = (int *)balls(sizeof(int) * 10);
-  var lol1 = (int *)balls(sizeof(int) * 10);
   if (!lol) {
     exit(67);
   }

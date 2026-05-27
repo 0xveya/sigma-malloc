@@ -83,6 +83,28 @@ StackLineResult get_leak_line(const char *filename, int linenum) {
 
     current_line++;
   }
+  result.type[0] = '\0';
+  char *type_start = strstr(result.line, "sizeof(");
+  if (type_start) {
+    type_start += 7;
+    char *type_end = strchr(type_start, ')');
+    if (type_end) {
+      size_t len = type_end - type_start;
+      if (len >= sizeof(result.type))
+        len = sizeof(result.type) - 1;
+      strncpy(result.type, type_start, len);
+      result.type[len] = '\0';
+    }
+  } else {
+    result.type[0] = 'u';
+    result.type[1] = 'n';
+    result.type[2] = 'k';
+    result.type[3] = 'n';
+    result.type[4] = 'o';
+    result.type[5] = 'w';
+    result.type[6] = 'n';
+    result.type[7] = '\0';
+  }
 
   fclose(file);
   result.status = READ_SUCCESS;
@@ -131,8 +153,9 @@ void show_skill_issues(void) {
             if (line_result.status == READ_SUCCESS) {
               fprintf(stderr, ANSI_RED "Memory Leak Detected" ANSI_RESET ":\n");
               fprintf(stderr,
-                      "  " ANSI_BOLD "Size Class:" ANSI_RESET " %zu bytes\n",
-                      cache->obj_size);
+                      "  " ANSI_BOLD "Size Class:" ANSI_RESET
+                      " %zu bytes of type" ANSI_BOLD " %s " ANSI_RESET "\n",
+                      cache->obj_size, line_result.type);
               fprintf(stderr,
                       "  " ANSI_BOLD "Location:" ANSI_RESET "   " ANSI_DIM
                       "%s:" ANSI_RESET "%d" ANSI_DIM ":" ANSI_RESET
@@ -145,8 +168,9 @@ void show_skill_issues(void) {
             } else {
               fprintf(stderr, ANSI_RED "Memory Leak Detected" ANSI_RESET ":\n");
               fprintf(stderr,
-                      "  " ANSI_BOLD "Size Class:" ANSI_RESET " %zu bytes\n",
-                      cache->obj_size);
+                      "  " ANSI_BOLD "Size Class:" ANSI_RESET
+                      " %zu bytes of type" ANSI_BOLD " %s " ANSI_RESET "\n",
+                      cache->obj_size, line_result.type);
               fprintf(stderr,
                       "  " ANSI_BOLD "Location:" ANSI_RESET "   " ANSI_DIM
                       "%s:" ANSI_RESET "%d" ANSI_DIM ":" ANSI_RESET
