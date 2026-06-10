@@ -10,7 +10,7 @@ description = "compile main (non debug)"
 run = """
 clang -std=c23 \
       -fblocks \
-      -Wall -Wextra -Wpedantic \
+      -Wall -Wextra -Wpedantic -Wno-auto-decl-extensions \
       -Wshadow -Wconversion -Wdouble-promotion \
       -Wformat=2 -Wundef -fno-common \
       -O2 \
@@ -24,7 +24,7 @@ description = "compile main (debug/dev build)"
 run = """
 clang -std=c23 \
       -fblocks \
-      -Wall -Wextra -Wpedantic \
+      -Wall -Wextra -Wpedantic -Wno-auto-decl-extensions \
       -Wshadow -Wconversion -Wdouble-promotion \
       -Wformat=2 -Wundef \
       -ggdb -O0 \

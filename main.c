@@ -1,6 +1,9 @@
-#include "sigma_malloc.h"
+#include "./include/sigma_malloc.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#define var auto
 
 int main(void) {
   var lol = (int *)balls(sizeof(int) * 10);

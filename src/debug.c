@@ -1,45 +1,13 @@
-#include "sigma_malloc.h"
+#include "../include/debug.h"
+#include "../include/qol.h"
+#include "../include/sigma_malloc.h"
+#include "../include/slab.h"
+#include "../include/utils.h"
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
-allocator_t g_alloc = {0};
-
-static void allocator_init(void) {
-  if (g_alloc.initialized)
-    return;
-
-  g_alloc.is_debug = false;
-
-#if USE_DEBUG_ALLOC == 2
-  g_alloc.is_debug = false;
-#elif USE_DEBUG_ALLOC == 1
-  g_alloc.is_debug = true;
-#else
-#ifndef __OPTIMIZE__
-  g_alloc.is_debug = true;
-#else
-  g_alloc.is_debug = false;
-#endif
-#endif
-
-  for (size_t i = 0; i < NUM_CACHES; i++) {
-    g_alloc.caches[i].obj_size = g_size_classes[i];
-
-    g_alloc.caches[i].partial = NULL;
-    g_alloc.caches[i].full = NULL;
-    g_alloc.caches[i].empty = NULL;
-  }
-
-  g_alloc.initialized = true;
-}
-
-static cache_t *get_cache(size_t size) {
-  for (size_t i = 0; i < NUM_CACHES; i++) {
-    if (size <= g_alloc.caches[i].obj_size)
-      return &g_alloc.caches[i];
-  }
-
-  return NULL;
-}
-
+#if SIGMA_DEBUG
 static bool is_ptr_in_freelist(free_node_t *head, void *ptr) {
   while (head) {
     if ((void *)head == ptr)
@@ -48,6 +16,7 @@ static bool is_ptr_in_freelist(free_node_t *head, void *ptr) {
   }
   return false;
 }
+#endif
 
 StackLineResult get_leak_line(const char *filename, int linenum) {
   StackLineResult result;
@@ -89,7 +58,7 @@ StackLineResult get_leak_line(const char *filename, int linenum) {
     type_start += 7;
     char *type_end = strchr(type_start, ')');
     if (type_end) {
-      size_t len = type_end - type_start;
+      size_t len = (size_t)(type_end - type_start);
       if (len >= sizeof(result.type))
         len = sizeof(result.type) - 1;
       strncpy(result.type, type_start, len);
@@ -111,6 +80,7 @@ StackLineResult get_leak_line(const char *filename, int linenum) {
   return result;
 }
 
+#if SIGMA_DEBUG
 [[gnu::destructor]]
 void show_skill_issues(void) {
   if (!g_alloc.initialized || !g_alloc.is_debug) {
@@ -212,135 +182,4 @@ void show_skill_issues(void) {
     }
   }
 }
-
-static slab_t *slab_create(cache_t *cache) {
-  size_t data_size = ALIGN_UP(cache->obj_size, sizeof(void *));
-
-  size_t slot_size = sizeof(obj_header_t) + data_size;
-
-  void *mem = mmap(NULL, SLAB_SIZE, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (mem == MAP_FAILED)
-    return NULL;
-
-  slab_t *slab = (slab_t *)mem;
-  slab->owner = cache;
-  slab->prev = NULL;
-  slab->next = NULL;
-  slab->used = 0;
-  slab->free_list = NULL;
-
-  uint8_t *obj_start =
-      (uint8_t *)mem + ALIGN_UP(sizeof(slab_t), sizeof(void *));
-  size_t usable = SLAB_SIZE - (size_t)(obj_start - (uint8_t *)mem);
-
-  slab->capacity = usable / slot_size;
-
-  for (size_t i = 0; i < slab->capacity; i++) {
-    uint8_t *slot_ptr = obj_start + (i * slot_size);
-
-    obj_header_t *hdr = (obj_header_t *)slot_ptr;
-    hdr->alloc_file = NULL;
-    hdr->alloc_func = NULL;
-    hdr->alloc_line = 0;
-    hdr->slab = slab;
-
-    free_node_t *node = (free_node_t *)(slot_ptr + sizeof(obj_header_t));
-
-    node->next = slab->free_list;
-    slab->free_list = node;
-  }
-
-  return slab;
-}
-
-static void slab_push(slab_t **head, slab_t *slab) {
-  slab->prev = NULL;
-  slab->next = *head;
-
-  if (*head)
-    (*head)->prev = slab;
-
-  *head = slab;
-}
-
-static void slab_remove(slab_t **head, slab_t *slab) {
-  if (slab->prev)
-    slab->prev->next = slab->next;
-
-  if (slab->next)
-    slab->next->prev = slab->prev;
-
-  if (*head == slab)
-    *head = slab->next;
-
-  slab->prev = NULL;
-  slab->next = NULL;
-}
-
-static void *slab_alloc(size_t size) {
-  cache_t *cache = get_cache(size);
-  if (!cache)
-    return NULL;
-  slab_t *slab = cache->partial;
-  if (!slab) {
-    slab = slab_create(cache);
-
-    if (!slab)
-      return NULL;
-
-    slab_push(&cache->partial, slab);
-  }
-
-  free_node_t *node = slab->free_list;
-
-  slab->free_list = node->next;
-
-  slab->used++;
-
-  if (slab->used == slab->capacity) {
-    slab_remove(&cache->partial, slab);
-    slab_push(&cache->full, slab);
-  }
-
-  return node;
-}
-
-void cock(void *pp) {
-  if (!pp)
-    return;
-
-  obj_header_t *hdr = (obj_header_t *)((uint8_t *)pp - sizeof(obj_header_t));
-  hdr->alloc_file = NULL;
-  hdr->alloc_func = NULL;
-  hdr->alloc_line = 0;
-  slab_t *slab = hdr->slab;
-  cache_t *cache = slab->owner;
-
-  bool was_full = (slab->used == slab->capacity);
-  free_node_t *node = (free_node_t *)pp;
-
-  node->next = slab->free_list;
-  slab->free_list = node;
-
-  slab->used--;
-
-  if (was_full) {
-    slab_remove(&cache->full, slab);
-    slab_push(&cache->partial, slab);
-  }
-
-  if (slab->used == 0) {
-    slab_remove(&cache->partial, slab);
-    slab_push(&cache->empty, slab);
-  }
-}
-
-void *balls_backend(size_t size) {
-  if (!g_alloc.initialized)
-    allocator_init();
-  if (size <= MAX_SLAB_SIZE)
-    return slab_alloc(size);
-
-  return NULL;
-}
+#endif
