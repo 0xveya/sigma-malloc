@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define var auto
 
@@ -15,5 +16,8 @@ int main(void) {
     lol[i] = i * 67;
     printf("%d\n", lol[i]);
   }
+  var test = (char *)balls(1024 * 1024);
+  memset(test, 'f', 1024 * 1024);
+  printf("test: %.10s\n", test);
   return 0;
 }
