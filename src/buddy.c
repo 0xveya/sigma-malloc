@@ -1,5 +1,6 @@
 #include "../include/buddy.h"
 #include "../include/qol.h"
+#include "../include/utils.h"
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -15,20 +16,49 @@ buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
 
   var max_leaves = pool_size / PAGE_SIZE;
   var total_nodes = (2 * max_leaves) - 1;
-  pool->bitmap_size = ALIGN_UP((total_nodes + 7) / 8, 8);
+  usize tree_size = ALIGN_UP(total_nodes * sizeof(buddy_node_state_t), 8);
 
-  pool->tree_bitmap = (u8 *)raw_mem;
-  memset(pool->tree_bitmap, 0, pool->bitmap_size);
+  pool->tree = (buddy_node_state_t *)raw_mem;
 
-  var *usable_mem =
-      (void *)ALIGN_UP((uptr)raw_mem + pool->bitmap_size, PAGE_SIZE);
+  var *usable_mem = (void *)ALIGN_UP((uptr)raw_mem + tree_size, PAGE_SIZE);
+  usize usable_size = (uptr)pool->memory_end - (uptr)usable_mem;
+
+  if (usable_size < PAGE_SIZE) {
+    return NULL;
+  }
+
+  usize root_abs_order =
+      (usize)((sizeof(usize) * 8U - 1U) - (usize)__builtin_clzl(usable_size));
+
+  if (root_abs_order > BUDDY_MAX_ORDER) {
+    root_abs_order = BUDDY_MAX_ORDER;
+  }
+
+  if (root_abs_order < BUDDY_MIN_ORDER) {
+    return NULL;
+  }
+
+  usize root_order = root_abs_order - BUDDY_MIN_ORDER;
+  usize root_depth = (BUDDY_NUM_ORDERS - 1) - root_order;
+  usize root_node = (1ULL << root_depth) - 1;
+
+  for (usize i = 0; i < total_nodes; i++) {
+    pool->tree[i] = BUDDY_NODE_FULL;
+  }
+  pool->tree[root_node] = BUDDY_NODE_FREE;
+
+  for (usize node = root_node; node > 0;) {
+    usize parent = (node - 1) / 2;
+    pool->tree[parent] = BUDDY_NODE_SPLIT;
+    node = parent;
+  }
 
   pool->usable_start = usable_mem;
   var *root_block = (buddy_block_t *)usable_mem;
   root_block->next = NULL;
   root_block->prev = NULL;
 
-  pool->free_lists[BUDDY_NUM_ORDERS - 1] = root_block;
+  pool->free_lists[root_order] = root_block;
 
   return pool;
 }
@@ -64,16 +94,44 @@ static inline usize ptr_to_node_index(buddy_pool_t *pool, void *ptr,
   return layer_start_node + block_index_in_row;
 }
 
-static inline bool get_bitmap_bit(buddy_pool_t *pool, usize node_index) {
-  usize byte_idx = node_index / 8;
-  usize bit_idx = node_index % 8;
-  return (pool->tree_bitmap[byte_idx] >> bit_idx) & 1;
+static inline void *node_index_to_ptr(buddy_pool_t *pool, usize node,
+                                      usize order) {
+  usize depth = (BUDDY_NUM_ORDERS - 1) - order;
+  usize first = (1ULL << depth) - 1;
+  usize block_index = node - first;
+  usize block_size = 1ULL << (order + BUDDY_MIN_ORDER);
+
+  return (void *)((uptr)pool->usable_start + block_index * block_size);
 }
 
-static inline void flip_bitmap_bit(buddy_pool_t *pool, usize node_index) {
-  usize byte_idx = node_index / 8;
-  usize bit_idx = node_index % 8;
-  pool->tree_bitmap[byte_idx] ^= (1 << bit_idx);
+static inline usize node_parent(usize node) { return (node - 1) / 2; }
+
+static inline usize node_left(usize node) { return node * 2 + 1; }
+
+static inline usize node_right(usize node) { return node * 2 + 2; }
+
+static inline usize node_buddy(usize node) {
+  return (node & 1) ? node + 1 : node - 1;
+}
+
+static inline bool node_is_free(buddy_pool_t *pool, usize node) {
+  return pool->tree[node] == BUDDY_NODE_FREE;
+}
+
+static inline bool node_is_split(buddy_pool_t *pool, usize node) {
+  return pool->tree[node] == BUDDY_NODE_SPLIT;
+}
+
+static inline void node_mark_free(buddy_pool_t *pool, usize node) {
+  pool->tree[node] = BUDDY_NODE_FREE;
+}
+
+static inline void node_mark_split(buddy_pool_t *pool, usize node) {
+  pool->tree[node] = BUDDY_NODE_SPLIT;
+}
+
+static inline void node_mark_full(buddy_pool_t *pool, usize node) {
+  pool->tree[node] = BUDDY_NODE_FULL;
 }
 
 static inline void list_remove(buddy_block_t **head, buddy_block_t *block) {
@@ -123,41 +181,106 @@ void *buddy_alloc_internal(buddy_pool_t *pool, usize size, const char *file,
 
 void *buddy_alloc(buddy_pool_t *pool, usize size) {
   var target_order = size_to_order(size);
+
   if (target_order >= BUDDY_NUM_ORDERS) {
     printf("target order too large: %zu\n", target_order);
     return NULL;
   }
-  printf("target order: %zu\n", target_order);
+
   var current_order = target_order;
+
   while (current_order < BUDDY_NUM_ORDERS &&
          pool->free_lists[current_order] == NULL) {
     current_order++;
   }
-  if (current_order == BUDDY_NUM_ORDERS) {
-    // shit is fucked and no memory
+
+  if (current_order == BUDDY_NUM_ORDERS)
     return NULL;
-  }
+
   var *block = pool->free_lists[current_order];
   list_remove(&pool->free_lists[current_order], block);
+
   while (current_order > target_order) {
-    // get the tree location at the current tier before descending
+
     var node_idx = ptr_to_node_index(pool, block, current_order);
-    flip_bitmap_bit(pool, node_idx); // Mark this exact node as split
+    node_mark_split(pool, node_idx);
 
     current_order--;
 
-    //  chop block in half
-    usize block_size = 1 << (current_order + BUDDY_MIN_ORDER);
+    usize left = node_left(node_idx);
+    usize right = node_right(node_idx);
+    node_mark_free(pool, left);
+    node_mark_free(pool, right);
+
+    usize block_size = 1ULL << (current_order + BUDDY_MIN_ORDER);
     var *buddy = (buddy_block_t *)((uptr)block + block_size);
 
-    // track the idle right half
     list_push(&pool->free_lists[current_order], buddy);
   }
-  // flip leaf bit to mark allocated
+
   var final_node = ptr_to_node_index(pool, block, target_order);
-  flip_bitmap_bit(pool, final_node);
+  node_mark_full(pool, final_node);
+
   buddy_header_t *header = (buddy_header_t *)block;
   header->order = (u8)target_order;
-  header->magic = BUDDY_MAGIC;
+  header->header.magic = BUDDY_MAGIC;
+  header->header.type = ALLOC_TYPE_BUDDY;
+
   return (void *)((uptr)block + sizeof(buddy_header_t));
+}
+
+void buddy_free(buddy_pool_t *pool, void *pp) {
+  if (!pp)
+    return;
+
+  buddy_header_t *hdr = (buddy_header_t *)((u8 *)pp - sizeof(buddy_header_t));
+
+  alloc_header_t *ah = &hdr->header;
+
+  if (ah->magic != BUDDY_MAGIC)
+    panic("buddy_free: invalid magic (double free/corruption)");
+
+  if (ah->type != ALLOC_TYPE_BUDDY)
+    panic("buddy_free: type mismatch");
+
+  usize order = hdr->order;
+
+  usize node_index = ptr_to_node_index(pool, hdr, order);
+  node_mark_free(pool, node_index);
+  buddy_block_t *block = (buddy_block_t *)hdr;
+
+  while (order < BUDDY_NUM_ORDERS - 1) {
+    usize buddy = node_buddy(node_index);
+
+    if (!node_is_free(pool, buddy))
+      break;
+
+    if (node_is_split(pool, buddy))
+      break;
+
+    buddy_block_t *buddy_block =
+        (buddy_block_t *)node_index_to_ptr(pool, buddy, order);
+
+    list_remove(&pool->free_lists[order], buddy_block);
+
+    usize parent = node_parent(node_index);
+
+    node_mark_free(pool, node_index);
+    node_mark_free(pool, buddy);
+    node_mark_free(pool, parent);
+
+    if ((uptr)buddy_block < (uptr)block)
+      block = buddy_block;
+
+    node_index = parent;
+    order++;
+  }
+
+  list_push(&pool->free_lists[order], block);
+
+#if SIGMA_DEBUG
+  hdr->alloc_file = NULL;
+  hdr->alloc_func = NULL;
+  hdr->alloc_line = 0;
+#endif
 }

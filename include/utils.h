@@ -1,6 +1,7 @@
 #pragma once
 
 #include "qol.h"
+#include <stdio.h>
 #define ANSI_RED "\x1b[31m"
 #define ANSI_DIM "\x1b[2m"
 #define ANSI_BOLD "\x1b[1m"
@@ -43,3 +44,10 @@ static inline void sigma_defer_cleanup(void (^*block)(void)) {
 #define defer                                                                  \
   void (^defer_id(__LINE__))(void)                                             \
       __attribute__((cleanup(sigma_defer_cleanup))) = ^
+
+static inline void panic(const char *msg) {
+  fprintf(stderr, "PANIC: %s\n", msg);
+  i32 *ptr = NULL;
+  i32 val = *ptr;
+  (void)val;
+}

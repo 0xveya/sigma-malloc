@@ -42,27 +42,33 @@
  * ============================================================================
  */
 
+#include "./common.h"
 #include "./debug.h"
-#include "qol.h"
+#include "./qol.h"
 #include <stddef.h>
 #include <stdint.h>
 
 #define PAGE_SIZE 4096
 
 #define BUDDY_MIN_ORDER 12 // 2^12 = 4096 Bytes (PAGE_SIZE)
-#define BUDDY_MAX_ORDER 22 // 2^22 = 4,194,304 Bytes (4 MB)
+#define BUDDY_MAX_ORDER 22 // 2^22 = 4 MB
 #define BUDDY_NUM_ORDERS (BUDDY_MAX_ORDER - BUDDY_MIN_ORDER + 1) // 11 Orders
 #define BUDDY_POOL_SIZE (4 * 1024 * 1024)                        // 4 MB
-#define BUDDY_MAGIC 0x67
+
+typedef enum buddy_node_state {
+  BUDDY_NODE_FREE,
+  BUDDY_NODE_SPLIT,
+  BUDDY_NODE_FULL
+} buddy_node_state_t;
 
 typedef struct buddy_header {
-  u8 order;
-  u8 magic;
 #if SIGMA_DEBUG
   const char *alloc_file;
   const char *alloc_func;
   i32 alloc_line;
 #endif
+  u8 order;
+  alloc_header_t header;
 } buddy_header_t;
 
 typedef struct buddy_block {
@@ -73,13 +79,11 @@ typedef struct buddy_block {
 typedef struct buddy_pool {
   void *memory_start; // ptr returned by the original mmap
   void *memory_end;
+  buddy_node_state_t *tree;
 
   // free lists for each order block size
   buddy_block_t *free_lists[BUDDY_NUM_ORDERS];
 
-  // Bitmaps to track allocation status and split tracking.
-  u8 *tree_bitmap;
-  usize bitmap_size;
   void *usable_start;
 } buddy_pool_t;
 
@@ -97,6 +101,5 @@ void *buddy_alloc_internal(buddy_pool_t *pool, usize size, const char *file,
                            const char *func, i32 line);
 void *buddy_alloc(buddy_pool_t *pool, usize size);
 void buddy_free(buddy_pool_t *pool, void *ptr);
-
 void *buddy_alloc_internal(buddy_pool_t *pool, usize size, const char *file,
                            const char *func, i32 line);

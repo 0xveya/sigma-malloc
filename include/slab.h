@@ -42,6 +42,7 @@
  * ============================================================================
  */
 
+#include "./common.h"
 #include "./debug.h"
 #include "qol.h"
 #include <stddef.h>
@@ -65,6 +66,7 @@ typedef struct free_node {
 
 // object header (stored before user pointer)
 typedef struct obj_header {
+  alloc_header_t header;
   slab_t *slab;
 #if SIGMA_DEBUG
   const char *alloc_file;
@@ -96,5 +98,4 @@ typedef struct slab {
 } slab_t;
 
 void *slab_alloc(usize size);
-void slab_push(slab_t **head, slab_t *slab);
-void slab_remove(slab_t **head, slab_t *slab);
+void slab_free(void *pp);
