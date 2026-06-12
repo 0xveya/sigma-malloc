@@ -43,6 +43,7 @@
  */
 
 #include "./debug.h"
+#include "qol.h"
 #include <stddef.h>
 
 #define PAGE_SIZE 4096
@@ -68,13 +69,13 @@ typedef struct obj_header {
 #if SIGMA_DEBUG
   const char *alloc_file;
   const char *alloc_func;
-  int alloc_line;
+  i32 alloc_line;
 #endif
 } obj_header_t;
 
 // cache = one size class
 typedef struct cache {
-  size_t obj_size;
+  usize obj_size;
 
   slab_t *partial;
   slab_t *full;
@@ -88,12 +89,12 @@ typedef struct slab {
 
   cache_t *owner;
 
-  size_t used;
-  size_t capacity;
+  usize used;
+  usize capacity;
 
   free_node_t *free_list;
 } slab_t;
 
-void *slab_alloc(size_t size);
+void *slab_alloc(usize size);
 void slab_push(slab_t **head, slab_t *slab);
 void slab_remove(slab_t **head, slab_t *slab);

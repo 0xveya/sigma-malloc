@@ -2,6 +2,7 @@
 
 #include "./buddy.h"
 #include "./slab.h"
+#include "qol.h"
 
 // global allocator
 typedef struct allocator {
@@ -14,12 +15,12 @@ typedef struct allocator {
 
 extern allocator_t g_alloc;
 
-void *balls_backend(size_t size);
+void *balls_backend(usize size);
 void cock(void *pp);
 
 #if SIGMA_DEBUG
-void *balls_debug_backend(size_t size, const char *file, const char *func,
-                          int line);
+void *balls_debug_backend(usize size, const char *file, const char *func,
+                          i32 line);
 
 #define balls(size) balls_debug_backend(size, __FILE__, __func__, __LINE__)
 #else

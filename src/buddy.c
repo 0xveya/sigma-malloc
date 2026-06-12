@@ -5,11 +5,11 @@
 #include <sys/mman.h>
 
 buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
-                                size_t pool_size) {
+                                usize pool_size) {
   pool->memory_start = raw_mem;
-  pool->memory_end = (void *)((uintptr_t)raw_mem + pool_size);
+  pool->memory_end = (void *)((uptr)raw_mem + pool_size);
 
-  for (size_t i = 0; i < BUDDY_NUM_ORDERS; i++) {
+  for (usize i = 0; i < BUDDY_NUM_ORDERS; i++) {
     pool->free_lists[i] = NULL;
   }
 
@@ -17,11 +17,11 @@ buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
   var total_nodes = (2 * max_leaves) - 1;
   pool->bitmap_size = ALIGN_UP((total_nodes + 7) / 8, 8);
 
-  pool->tree_bitmap = (uint8_t *)raw_mem;
+  pool->tree_bitmap = (u8 *)raw_mem;
   memset(pool->tree_bitmap, 0, pool->bitmap_size);
 
   var *usable_mem =
-      (void *)ALIGN_UP((uintptr_t)raw_mem + pool->bitmap_size, PAGE_SIZE);
+      (void *)ALIGN_UP((uptr)raw_mem + pool->bitmap_size, PAGE_SIZE);
 
   pool->usable_start = usable_mem;
   var *root_block = (buddy_block_t *)usable_mem;
@@ -33,8 +33,8 @@ buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
   return pool;
 }
 
-static inline size_t size_to_order(size_t size) {
-  size_t total_size = size + sizeof(buddy_header_t);
+static inline usize size_to_order(usize size) {
+  usize total_size = size + sizeof(buddy_header_t);
 
   if (total_size <= PAGE_SIZE) {
     return 0;
@@ -45,35 +45,34 @@ static inline size_t size_to_order(size_t size) {
   }
 
   //  find the next highest power of two
-  size_t power =
-      (size_t)(32U - (unsigned int)__builtin_clz((uint32_t)total_size - 1));
+  usize power = (usize)(32U - (u32)__builtin_clz((u32)total_size - 1));
 
   return power - BUDDY_MIN_ORDER;
 }
 
-static inline size_t ptr_to_node_index(buddy_pool_t *pool, void *ptr,
-                                       size_t order) {
-  size_t block_size = 1ULL << (order + BUDDY_MIN_ORDER);
+static inline usize ptr_to_node_index(buddy_pool_t *pool, void *ptr,
+                                      usize order) {
+  usize block_size = 1ULL << (order + BUDDY_MIN_ORDER);
 
-  size_t offset = (uintptr_t)ptr - (uintptr_t)pool->usable_start;
+  usize offset = (uptr)ptr - (uptr)pool->usable_start;
 
-  size_t block_index_in_row = offset / block_size;
+  usize block_index_in_row = offset / block_size;
 
-  size_t depth = (BUDDY_NUM_ORDERS - 1) - order;
-  size_t layer_start_node = (1ULL << depth) - 1;
+  usize depth = (BUDDY_NUM_ORDERS - 1) - order;
+  usize layer_start_node = (1ULL << depth) - 1;
 
   return layer_start_node + block_index_in_row;
 }
 
-static inline bool get_bitmap_bit(buddy_pool_t *pool, size_t node_index) {
-  size_t byte_idx = node_index / 8;
-  size_t bit_idx = node_index % 8;
+static inline bool get_bitmap_bit(buddy_pool_t *pool, usize node_index) {
+  usize byte_idx = node_index / 8;
+  usize bit_idx = node_index % 8;
   return (pool->tree_bitmap[byte_idx] >> bit_idx) & 1;
 }
 
-static inline void flip_bitmap_bit(buddy_pool_t *pool, size_t node_index) {
-  size_t byte_idx = node_index / 8;
-  size_t bit_idx = node_index % 8;
+static inline void flip_bitmap_bit(buddy_pool_t *pool, usize node_index) {
+  usize byte_idx = node_index / 8;
+  usize bit_idx = node_index % 8;
   pool->tree_bitmap[byte_idx] ^= (1 << bit_idx);
 }
 
@@ -100,16 +99,15 @@ static inline void list_push(buddy_block_t **head, buddy_block_t *block) {
   *head = block;
 }
 
-void *buddy_alloc_internal(buddy_pool_t *pool, size_t size, const char *file,
-                           const char *func, int line) {
+void *buddy_alloc_internal(buddy_pool_t *pool, usize size, const char *file,
+                           const char *func, i32 line) {
   void *ptr = buddy_alloc(pool, size);
 
   if (!ptr)
     return NULL;
 
 #if SIGMA_DEBUG
-  buddy_header_t *hdr =
-      (buddy_header_t *)((uint8_t *)ptr - sizeof(buddy_header_t));
+  buddy_header_t *hdr = (buddy_header_t *)((u8 *)ptr - sizeof(buddy_header_t));
 
   hdr->alloc_file = file;
   hdr->alloc_func = func;
@@ -123,7 +121,7 @@ void *buddy_alloc_internal(buddy_pool_t *pool, size_t size, const char *file,
   return ptr;
 }
 
-void *buddy_alloc(buddy_pool_t *pool, size_t size) {
+void *buddy_alloc(buddy_pool_t *pool, usize size) {
   var target_order = size_to_order(size);
   if (target_order >= BUDDY_NUM_ORDERS) {
     printf("target order too large: %zu\n", target_order);
@@ -149,17 +147,17 @@ void *buddy_alloc(buddy_pool_t *pool, size_t size) {
     current_order--;
 
     //  chop block in half
-    size_t block_size = 1 << (current_order + BUDDY_MIN_ORDER);
-    var *buddy = (buddy_block_t *)((uintptr_t)block + block_size);
+    usize block_size = 1 << (current_order + BUDDY_MIN_ORDER);
+    var *buddy = (buddy_block_t *)((uptr)block + block_size);
 
     // track the idle right half
     list_push(&pool->free_lists[current_order], buddy);
   }
   // flip leaf bit to mark allocated
-  size_t final_node = ptr_to_node_index(pool, block, target_order);
+  var final_node = ptr_to_node_index(pool, block, target_order);
   flip_bitmap_bit(pool, final_node);
   buddy_header_t *header = (buddy_header_t *)block;
-  header->order = (uint8_t)target_order;
+  header->order = (u8)target_order;
   header->magic = BUDDY_MAGIC;
-  return (void *)((uintptr_t)block + sizeof(buddy_header_t));
+  return (void *)((uptr)block + sizeof(buddy_header_t));
 }

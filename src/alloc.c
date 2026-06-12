@@ -16,7 +16,7 @@ static void allocator_init(void) {
   g_alloc.is_debug = false;
 #endif
 
-  for (size_t i = 0; i < NUM_CACHES; i++) {
+  for (usize i = 0; i < NUM_CACHES; i++) {
     g_alloc.caches[i].obj_size = g_size_classes[i];
 
     g_alloc.caches[i].partial = NULL;
@@ -35,25 +35,34 @@ static void allocator_init(void) {
   g_alloc.initialized = true;
 }
 
-void *balls_debug_backend(size_t size, const char *file, const char *func,
-                          int line) {
+void *balls_debug_backend(usize size, const char *file, const char *func,
+                          i32 line) {
   void *ptr = balls_backend(size);
 
   if (!ptr)
     return NULL;
 
-  if (size > MAX_SLAB_OBJ_SIZE) {
+#if SIGMA_DEBUG
+  if (size <= MAX_SLAB_OBJ_SIZE) {
+    obj_header_t *hdr = (obj_header_t *)((u8 *)ptr - sizeof(obj_header_t));
+
+    hdr->alloc_file = file;
+    hdr->alloc_func = func;
+    hdr->alloc_line = line;
+  } else {
     buddy_header_t *hdr =
-        (buddy_header_t *)((uint8_t *)ptr - sizeof(buddy_header_t));
+        (buddy_header_t *)((u8 *)ptr - sizeof(buddy_header_t));
 
     hdr->alloc_file = file;
     hdr->alloc_func = func;
     hdr->alloc_line = line;
   }
+#endif
 
   return ptr;
 }
-void *balls_backend(size_t size) {
+
+void *balls_backend(usize size) {
   if (!g_alloc.initialized)
     allocator_init();
   if (size <= MAX_SLAB_OBJ_SIZE)

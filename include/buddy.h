@@ -43,6 +43,7 @@
  */
 
 #include "./debug.h"
+#include "qol.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -55,12 +56,12 @@
 #define BUDDY_MAGIC 0x67
 
 typedef struct buddy_header {
-  uint8_t order;
-  uint8_t magic;
+  u8 order;
+  u8 magic;
 #if SIGMA_DEBUG
   const char *alloc_file;
   const char *alloc_func;
-  int alloc_line;
+  i32 alloc_line;
 #endif
 } buddy_header_t;
 
@@ -77,8 +78,8 @@ typedef struct buddy_pool {
   buddy_block_t *free_lists[BUDDY_NUM_ORDERS];
 
   // Bitmaps to track allocation status and split tracking.
-  uint8_t *tree_bitmap;
-  size_t bitmap_size;
+  u8 *tree_bitmap;
+  usize bitmap_size;
   void *usable_start;
 } buddy_pool_t;
 
@@ -91,11 +92,11 @@ typedef struct buddy_pool {
 #endif
 
 buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
-                                size_t pool_size);
-void *buddy_alloc_internal(buddy_pool_t *pool, size_t size, const char *file,
-                           const char *func, int line);
-void *buddy_alloc(buddy_pool_t *pool, size_t size);
+                                usize pool_size);
+void *buddy_alloc_internal(buddy_pool_t *pool, usize size, const char *file,
+                           const char *func, i32 line);
+void *buddy_alloc(buddy_pool_t *pool, usize size);
 void buddy_free(buddy_pool_t *pool, void *ptr);
 
-void *buddy_alloc_internal(buddy_pool_t *pool, size_t size, const char *file,
-                           const char *func, int line);
+void *buddy_alloc_internal(buddy_pool_t *pool, usize size, const char *file,
+                           const char *func, i32 line);

@@ -18,7 +18,7 @@ static bool is_ptr_in_freelist(free_node_t *head, void *ptr) {
 }
 #endif
 
-StackLineResult get_leak_line(const char *filename, int linenum) {
+StackLineResult get_leak_line(const char *filename, i32 linenum) {
   StackLineResult result;
   result.line[0] = '\0';
 
@@ -33,7 +33,7 @@ StackLineResult get_leak_line(const char *filename, int linenum) {
     return result;
   }
 
-  int current_line = 1;
+  i32 current_line = 1;
 
   while (current_line <= linenum) {
     if (fgets(result.line, sizeof(result.line), file) == NULL) {
@@ -53,12 +53,12 @@ StackLineResult get_leak_line(const char *filename, int linenum) {
     current_line++;
   }
   result.type[0] = '\0';
-  char *type_start = strstr(result.line, "sizeof(");
+  var *type_start = strstr(result.line, "sizeof(");
   if (type_start) {
     type_start += 7;
-    char *type_end = strchr(type_start, ')');
+    var *type_end = strchr(type_start, ')');
     if (type_end) {
-      size_t len = (size_t)(type_end - type_start);
+      usize len = (usize)(type_end - type_start);
       if (len >= sizeof(result.type))
         len = sizeof(result.type) - 1;
       strncpy(result.type, type_start, len);
@@ -86,23 +86,23 @@ void show_skill_issues(void) {
   if (!g_alloc.initialized || !g_alloc.is_debug) {
     return;
   }
-  size_t leaks_count = 0;
+  usize leaks_count = 0;
 
-  for (size_t i = 0; i < NUM_CACHES; i++) {
+  for (usize i = 0; i < NUM_CACHES; i++) {
     cache_t *cache = &g_alloc.caches[i];
     slab_t *slabs_to_check[] = {cache->partial, cache->full};
 
-    for (int s_idx = 0; s_idx < 2; s_idx++) {
+    for (i32 s_idx = 0; s_idx < 2; s_idx++) {
       slab_t *current_slab = slabs_to_check[s_idx];
       while (current_slab) {
 
-        uint8_t *obj_start =
-            (uint8_t *)current_slab + ALIGN_UP(sizeof(slab_t), sizeof(void *));
-        size_t data_size = ALIGN_UP(cache->obj_size, sizeof(void *));
-        size_t slot_size = sizeof(obj_header_t) + data_size;
+        u8 *obj_start =
+            (u8 *)current_slab + ALIGN_UP(sizeof(slab_t), sizeof(void *));
+        usize data_size = ALIGN_UP(cache->obj_size, sizeof(void *));
+        usize slot_size = sizeof(obj_header_t) + data_size;
 
-        for (size_t obj_i = 0; obj_i < current_slab->capacity; obj_i++) {
-          uint8_t *slot_ptr = obj_start + (obj_i * slot_size);
+        for (usize obj_i = 0; obj_i < current_slab->capacity; obj_i++) {
+          u8 *slot_ptr = obj_start + (obj_i * slot_size);
           obj_header_t *hdr = (obj_header_t *)slot_ptr;
           void *user_ptr = slot_ptr + sizeof(obj_header_t);
 
@@ -110,7 +110,7 @@ void show_skill_issues(void) {
 
             const char *display_file = hdr->alloc_file;
             const char *display_func = hdr->alloc_func;
-            int display_line = hdr->alloc_line;
+            i32 display_line = hdr->alloc_line;
 
             if (hdr->alloc_file != NULL) {
               display_file = strrchr(hdr->alloc_file, '/')

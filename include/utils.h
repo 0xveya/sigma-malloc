@@ -1,5 +1,6 @@
 #pragma once
 
+#include "qol.h"
 #define ANSI_RED "\x1b[31m"
 #define ANSI_DIM "\x1b[2m"
 #define ANSI_BOLD "\x1b[1m"
@@ -25,7 +26,7 @@ typedef struct {
 
   union {
     char *line;
-    int os_errno;
+    i32 os_errno;
   } value;
 } ReadLineResult;
 

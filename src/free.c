@@ -6,7 +6,7 @@ void cock(void *pp) {
   if (!pp)
     return;
 
-  obj_header_t *hdr = (obj_header_t *)((uint8_t *)pp - sizeof(obj_header_t));
+  obj_header_t *hdr = (obj_header_t *)((u8 *)pp - sizeof(obj_header_t));
 #if SIGMA_DEBUG
   hdr->alloc_file = NULL;
   hdr->alloc_func = NULL;
