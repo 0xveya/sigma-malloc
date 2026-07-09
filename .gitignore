@@ -11,3 +11,6 @@ compile_commands.json
 *.swp
 *.swo
 *vgcore*
+
+.zig-cache/
+zig-out/

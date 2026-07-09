@@ -1,0 +1,13 @@
+.{
+    .name = .sigma_malloc,
+    .version = "0.1.0",
+    .fingerprint = 0x4288025b1511f6c2,
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "include",
+        "main.c",
+    },
+}

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "qol.h"
+
 #ifndef USE_DEBUG_ALLOC
 #define USE_DEBUG_ALLOC 0
 #endif
@@ -30,3 +32,33 @@
 #else
 #define balls_debug_tag(ptr) ((void)(ptr))
 #endif
+
+typedef enum {
+  RESULT_OK,
+  RESULT_ERR,
+} ResultStatus;
+
+typedef struct {
+  const char *file;
+  const char *func;
+  i32 line;
+  usize size;
+  char type[64];
+  char source_line[1024];
+} LeakInfo;
+
+typedef struct {
+  const char *message;
+} LeakError;
+
+typedef struct {
+  ResultStatus status;
+  union {
+    LeakInfo ok;
+    LeakError err;
+  } value;
+} LeakResult;
+
+#define MAX_LEAKS 4096
+static LeakResult g_leaks[MAX_LEAKS];
+static usize g_leak_count = 0;

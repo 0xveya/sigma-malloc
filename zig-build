@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Runs zig build using our local zig wrapper
+exec "$(dirname "$0")/zig" build "$@"

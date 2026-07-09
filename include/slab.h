@@ -66,13 +66,14 @@ typedef struct free_node {
 
 // object header (stored before user pointer)
 typedef struct obj_header {
-  alloc_header_t header;
   slab_t *slab;
 #if SIGMA_DEBUG
   const char *alloc_file;
   const char *alloc_func;
   i32 alloc_line;
+  i32 padding;
 #endif
+  alloc_header_t header;
 } obj_header_t;
 
 // cache = one size class

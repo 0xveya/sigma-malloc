@@ -80,92 +80,92 @@ StackLineResult get_leak_line(const char *filename, i32 linenum) {
   return result;
 }
 
-#if SIGMA_DEBUG
-[[gnu::destructor]]
-void show_skill_issues(void) {
-  if (!g_alloc.initialized || !g_alloc.is_debug) {
-    return;
-  }
-  usize leaks_count = 0;
+void leak_push(LeakResult r) {
+  if (g_leak_count < MAX_LEAKS)
+    g_leaks[g_leak_count++] = r;
+}
 
+#if SIGMA_DEBUG
+static void collect_slab_leaks(void) {
   for (usize i = 0; i < NUM_CACHES; i++) {
     cache_t *cache = &g_alloc.caches[i];
     slab_t *slabs_to_check[] = {cache->partial, cache->full};
 
     for (i32 s_idx = 0; s_idx < 2; s_idx++) {
-      slab_t *current_slab = slabs_to_check[s_idx];
-      while (current_slab) {
+      slab_t *slab = slabs_to_check[s_idx];
+      while (slab) {
+        u8 *obj_start = (u8 *)slab + ALIGN_UP(sizeof(slab_t), sizeof(void *));
+        usize slot_size =
+            sizeof(obj_header_t) + ALIGN_UP(cache->obj_size, sizeof(void *));
 
-        u8 *obj_start =
-            (u8 *)current_slab + ALIGN_UP(sizeof(slab_t), sizeof(void *));
-        usize data_size = ALIGN_UP(cache->obj_size, sizeof(void *));
-        usize slot_size = sizeof(obj_header_t) + data_size;
+        for (usize j = 0; j < slab->capacity; j++) {
+          u8 *slot = obj_start + j * slot_size;
+          obj_header_t *hdr = (obj_header_t *)slot;
+          void *user = slot + sizeof(obj_header_t);
 
-        for (usize obj_i = 0; obj_i < current_slab->capacity; obj_i++) {
-          u8 *slot_ptr = obj_start + (obj_i * slot_size);
-          obj_header_t *hdr = (obj_header_t *)slot_ptr;
-          void *user_ptr = slot_ptr + sizeof(obj_header_t);
-
-          if (!is_ptr_in_freelist(current_slab->free_list, user_ptr)) {
-
-            const char *display_file = hdr->alloc_file;
-            const char *display_func = hdr->alloc_func;
-            i32 display_line = hdr->alloc_line;
-
-            if (hdr->alloc_file != NULL) {
-              display_file = strrchr(hdr->alloc_file, '/')
-                                 ? strrchr(hdr->alloc_file, '/') + 1
-                                 : hdr->alloc_file;
-              display_func = hdr->alloc_func;
-              display_line = hdr->alloc_line;
-            }
-            var line_result = get_leak_line(display_file, display_line);
-            if (line_result.status == READ_SUCCESS) {
-              fprintf(stderr, ANSI_RED "Memory Leak Detected" ANSI_RESET ":\n");
-              fprintf(stderr,
-                      "  " ANSI_BOLD "Size Class:" ANSI_RESET
-                      " %zu bytes of type" ANSI_BOLD " %s " ANSI_RESET "\n",
-                      cache->obj_size, line_result.type);
-              fprintf(stderr,
-                      "  " ANSI_BOLD "Location:" ANSI_RESET "   " ANSI_DIM
-                      "%s:" ANSI_RESET "%d" ANSI_DIM ":" ANSI_RESET
-                      " inside " ANSI_BOLD "%s" ANSI_RESET "()\n",
-                      display_file, display_line, display_func);
-              fprintf(stderr, "     " ANSI_DIM "=>" ANSI_RESET " %s\n\n",
-                      line_result.line);
-
-              leaks_count++;
-            } else {
-              fprintf(stderr, ANSI_RED "Memory Leak Detected" ANSI_RESET ":\n");
-              fprintf(stderr,
-                      "  " ANSI_BOLD "Size Class:" ANSI_RESET
-                      " %zu bytes of type" ANSI_BOLD " %s " ANSI_RESET "\n",
-                      cache->obj_size, line_result.type);
-              fprintf(stderr,
-                      "  " ANSI_BOLD "Location:" ANSI_RESET "   " ANSI_DIM
-                      "%s:" ANSI_RESET "%d" ANSI_DIM ":" ANSI_RESET
-                      " inside " ANSI_BOLD "%s" ANSI_RESET "()\n",
-                      display_file, display_line, display_func);
-              fprintf(stderr,
-                      "     " ANSI_DIM "=> (source line unavailable)\n\n");
-
-              leaks_count++;
-            }
+          if (!is_ptr_in_freelist(slab->free_list, user)) {
+            const char *file = hdr->alloc_file
+                                   ? (strrchr(hdr->alloc_file, '/')
+                                          ? strrchr(hdr->alloc_file, '/') + 1
+                                          : hdr->alloc_file)
+                                   : NULL;
+            leak_push((LeakResult){.status = RESULT_OK,
+                                   .value.ok = {
+                                       .file = file,
+                                       .func = hdr->alloc_func,
+                                       .line = hdr->alloc_line,
+                                       .size = cache->obj_size,
+                                   }});
           }
         }
-        current_slab = current_slab->next;
+        slab = slab->next;
       }
     }
   }
+}
+#endif
 
-  if (leaks_count > 0) {
-    if (HORNY_MODE == 0) {
-      fprintf(stderr, "leaks: %zu \n", leaks_count);
-    } else {
+#if SIGMA_DEBUG
+[[gnu::destructor]]
+void show_leak_issues(void) {
+  if (!g_alloc.initialized || !g_alloc.is_debug)
+    return;
+
+  collect_slab_leaks();
+  // collect_buddy_leaks(); need to implemnt erm
+
+  for (usize i = 0; i < g_leak_count; i++) {
+    LeakResult *r = &g_leaks[i];
+    if (r->status != RESULT_OK)
+      continue;
+
+    LeakInfo *info = &r->value.ok;
+    StackLineResult src = get_leak_line(info->file, info->line);
+
+    fprintf(stderr, ANSI_RED "Memory Leak Detected" ANSI_RESET ":\n");
+    fprintf(stderr,
+            "  " ANSI_BOLD "Size Class:" ANSI_RESET
+            " %zu bytes of type" ANSI_BOLD " %s " ANSI_RESET "\n",
+            info->size, src.status == READ_SUCCESS ? src.type : "unknown");
+    fprintf(stderr,
+            "  " ANSI_BOLD "Location:" ANSI_RESET "   " ANSI_DIM
+            "%s:" ANSI_RESET "%d" ANSI_DIM ":" ANSI_RESET " inside " ANSI_BOLD
+            "%s" ANSI_RESET "()\n",
+            info->file, info->line, info->func);
+    if (src.status == READ_SUCCESS)
+      fprintf(stderr, "     " ANSI_DIM "=>" ANSI_RESET " %s\n\n", src.line);
+    else
+      fprintf(stderr, "     " ANSI_DIM "=> (source line unavailable)\n\n");
+  }
+
+  if (g_leak_count > 0) {
+    if (HORNY_MODE == 0)
+      fprintf(stderr, "leaks: %zu\n", g_leak_count);
+    else
       fprintf(stderr, "you were a leaky bottom and leaked %zu times\n",
-              leaks_count);
-    }
+              g_leak_count);
   } else {
+#ifndef SIGMA_TESTING
     switch (NO_LEAK_REWARD) {
     case 0:
       fprintf(stderr, "no leaks\n");
@@ -180,6 +180,7 @@ void show_skill_issues(void) {
       fprintf(stderr, "no leaks good boy\n");
       break;
     }
+#endif
   }
 }
 #endif

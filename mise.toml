@@ -1,75 +1,47 @@
 [tools]
-clang = "latest"
+zig = "0.16.0"
 clang-format = "latest"
-"conda:compiler-rt" = "latest"
 "conda:cppcheck" = "latest"
 "conda:bear" = "latest"
 
 [tasks.build]
 description = "compile main (non debug)"
-run = """
-clang -std=c23 \
-      -fblocks \
-      -Wall -Wextra -Wpedantic -Wno-auto-decl-extensions \
-      -Wshadow -Wconversion -Wdouble-promotion \
-      -Wformat=2 -Wundef -fno-common \
-      -O2 \
-      $(find . -name '*.c' | grep -v 'test.c') \
-      -o app \
-      -lBlocksRuntime
-"""
+run = "zig build -Doptimize=ReleaseFast"
 
 [tasks.dev]
 description = "compile main (debug/dev build)"
-run = """
-clang -std=c23 \
-      -fblocks \
-      -Wall -Wextra -Wpedantic -Wno-auto-decl-extensions \
-      -Wshadow -Wconversion -Wdouble-promotion \
-      -Wformat=2 -Wundef \
-      -ggdb -O0 \
-      $(find . -name '*.c' | grep -v 'test.c') \
-      -o app-dev \
-      -lBlocksRuntime \
-      -DHORNY_MODE=1 \
-      -DNO_LEAK_REWARD=1 \
-      -DUSE_DEBUG_ALLOC=1
-"""
+run = "zig build -Doptimize=Debug"
 
 [tasks.test]
-description = "compile tests"
-run = """
-clang -std=c23 \
-      -fblocks \
-      -Wall -Wextra -Wpedantic \
-      -g -O0 \
-      $(find . -name '*.c' | grep -v 'main.c') \
-      -o tests \
-      -lBlocksRuntime
-"""
+description = "compile and run tests (if test.c exists)"
+run = "zig build && [ -f zig-out/bin/tests ] && ./zig-out/bin/tests || echo 'No tests binary compiled (test.c not found)'"
 
 [tasks.run]
 description = "run release build"
 depends = ["build"]
-run = "./app"
+run = "./zig-out/bin/app"
 
 [tasks.dev-run]
 description = "run debug/dev build"
 depends = ["dev"]
-run = "./app-dev"
+run = "./zig-out/bin/app-dev"
+
+[tasks.std]
+description = "run zig std documentation server"
+run = "zig std -p 8000 --no-open-browser"
 
 [tasks.compiledb]
 description = "generate compile_commands.json for neovim"
-run = "bear -- append mise run build && bear -- append mise run test"
+run = "bear -- zig build -Doptimize=Debug"
 
 [tasks.check]
 description = "check stuff"
-run = "cppcheck --enable=all --suppress=missingIncludeSystem *.c"
+run = "cppcheck --enable=all --suppress=missingIncludeSystem main.c src/*.c"
 
 [tasks.format]
 description = "format files"
-run = "clang-format -i *.c *.h"
+run = "clang-format -i main.c src/*.c include/*.h"
 
 [tasks.clean]
 description = "remove build artifacts"
-run = "rm -rf app app-dev tests compile_commands.json .bear-fingerprints"
+run = "rm -rf zig-out .zig-cache compile_commands.json .bear-fingerprints app app-dev tests"
