@@ -104,6 +104,20 @@ static void collect_slab_leaks(void) {
           void *user = slot + sizeof(obj_header_t);
 
           if (!is_ptr_in_freelist(slab->free_list, user)) {
+            bool is_large_tracking_infrastructure = false;
+            large_node_t *curr_large = g_alloc.large_allocs_head;
+            while (curr_large) {
+              large_header_t *lh = (large_header_t *)curr_large->mmap_ptr;
+              if ((void *)curr_large == user || (void *)lh->meta == user) {
+                is_large_tracking_infrastructure = true;
+                break;
+              }
+              curr_large = curr_large->next;
+            }
+
+            if (is_large_tracking_infrastructure) {
+              continue;
+            }
             const char *file = hdr->alloc_file
                                    ? (strrchr(hdr->alloc_file, '/')
                                           ? strrchr(hdr->alloc_file, '/') + 1
@@ -185,6 +199,30 @@ void collect_buddy_leaks(buddy_pool_t *pool) {
   traverse_buddy_nodes(pool, 0, BUDDY_NUM_ORDERS - 1);
 }
 
+static void collect_large_leaks(void) {
+  large_node_t *node = g_alloc.large_allocs_head;
+  while (node) {
+    large_header_t *header = (large_header_t *)node->mmap_ptr;
+    large_metadata_t *meta = header->meta;
+
+    const char *file = meta->alloc_file
+                           ? (strrchr(meta->alloc_file, '/')
+                                  ? strrchr(meta->alloc_file, '/') + 1
+                                  : meta->alloc_file)
+                           : NULL;
+
+    leak_push((LeakResult){.status = RESULT_OK,
+                           .value.ok = {
+                               .file = file,
+                               .func = meta->alloc_func,
+                               .line = meta->alloc_line,
+                               .size = node->mmap_size - sizeof(large_header_t),
+                           }});
+
+    node = node->next;
+  }
+}
+
 #endif
 
 #if SIGMA_DEBUG
@@ -195,6 +233,7 @@ void show_leak_issues(void) {
 
   collect_slab_leaks();
   collect_buddy_leaks(&g_alloc.buddy_pool);
+  collect_large_leaks();
 
   for (usize i = 0; i < g_leak_count; i++) {
     LeakResult *r = &g_leaks[i];

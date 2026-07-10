@@ -2,6 +2,7 @@
 
 #include "./buddy.h"
 #include "./slab.h"
+#include "large.h"
 #include "qol.h"
 
 // global allocator
@@ -11,6 +12,7 @@ typedef struct allocator {
 
   cache_t caches[NUM_CACHES];
   buddy_pool_t buddy_pool;
+  large_node_t *large_allocs_head;
 } allocator_t;
 
 extern allocator_t g_alloc;

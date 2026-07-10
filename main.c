@@ -20,6 +20,10 @@ int main(void) {
   var test = (char *)balls(1024 * 1024);
   memset(test, 'f', 1024 * 1024);
   printf("test: %.10s\n", test);
+
+  var test1 = (char *)balls(1024 * 10024);
+  memset(test, 'f', 1024 * 1024);
+  printf("test: %.10s\n", test);
   // defer { cock(test); };
   // cock(lol);
   return 0;
