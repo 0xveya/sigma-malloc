@@ -123,6 +123,68 @@ static void collect_slab_leaks(void) {
     }
   }
 }
+
+static inline void *node_index_to_ptr(buddy_pool_t *pool, usize node,
+                                      usize order) {
+  usize depth = (BUDDY_NUM_ORDERS - 1) - order;
+  usize first = (1ULL << depth) - 1;
+  usize block_index = node - first;
+  usize block_size = 1ULL << (order + BUDDY_MIN_ORDER);
+
+  return (void *)((uptr)pool->usable_start + block_index * block_size);
+}
+
+static inline usize node_left(usize node) { return node * 2 + 1; }
+
+static inline usize node_right(usize node) { return node * 2 + 2; }
+
+static void traverse_buddy_nodes(buddy_pool_t *pool, usize index,
+                                 usize relative_order) {
+  if (relative_order >= BUDDY_NUM_ORDERS) {
+    return;
+  }
+
+  buddy_node_state_t state = pool->tree[index];
+
+  if (state == BUDDY_NODE_FULL) {
+    void *block_ptr = node_index_to_ptr(pool, index, relative_order);
+    buddy_header_t *hdr = (buddy_header_t *)block_ptr;
+
+    if (hdr->header.magic == BUDDY_MAGIC && hdr->order == relative_order) {
+      const char *file = hdr->alloc_file
+                             ? (strrchr(hdr->alloc_file, '/')
+                                    ? strrchr(hdr->alloc_file, '/') + 1
+                                    : hdr->alloc_file)
+                             : NULL;
+      leak_push((LeakResult){
+          .status = RESULT_OK,
+          .value.ok = {
+              .file = file,
+              .func = hdr->alloc_func,
+              .line = hdr->alloc_line,
+              .size = (1ULL << (relative_order + BUDDY_MIN_ORDER)) -
+                      sizeof(buddy_header_t),
+          }});
+    }
+    return;
+  }
+
+  if (state == BUDDY_NODE_SPLIT && relative_order > 0) {
+    usize left_child = node_left(index);
+    usize right_child = node_right(index);
+
+    traverse_buddy_nodes(pool, left_child, relative_order - 1);
+    traverse_buddy_nodes(pool, right_child, relative_order - 1);
+  }
+}
+
+void collect_buddy_leaks(buddy_pool_t *pool) {
+  if (!pool || !pool->tree)
+    return;
+
+  traverse_buddy_nodes(pool, 0, BUDDY_NUM_ORDERS - 1);
+}
+
 #endif
 
 #if SIGMA_DEBUG
@@ -132,7 +194,7 @@ void show_leak_issues(void) {
     return;
 
   collect_slab_leaks();
-  // collect_buddy_leaks(); need to implemnt erm
+  collect_buddy_leaks(&g_alloc.buddy_pool);
 
   for (usize i = 0; i < g_leak_count; i++) {
     LeakResult *r = &g_leaks[i];
@@ -177,6 +239,7 @@ void show_leak_issues(void) {
       fprintf(stderr, "no leaks good enby\n");
       break;
     case 3:
+      fprintf(stderr, "no leaks good boy\n");
       fprintf(stderr, "no leaks good boy\n");
       break;
     }
