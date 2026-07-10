@@ -80,6 +80,23 @@ StackLineResult get_leak_line(const char *filename, i32 linenum) {
   return result;
 }
 
+static void format_readable_size(char *buf, usize buf_size, usize bytes) {
+  double size = (double)bytes;
+  const char *units[] = {"B", "KB", "MB", "GB", "TB"};
+  int unit_idx = 0;
+
+  while (size >= 1024.0 && unit_idx < 4) {
+    size /= 1024.0;
+    unit_idx++;
+  }
+
+  if (unit_idx == 0) {
+    snprintf(buf, buf_size, "%zu B", bytes);
+  } else {
+    snprintf(buf, buf_size, "%.2f %s", size, units[unit_idx]);
+  }
+}
+
 void leak_push(LeakResult r) {
   if (g_leak_count < MAX_LEAKS)
     g_leaks[g_leak_count++] = r;
@@ -242,12 +259,14 @@ void show_leak_issues(void) {
 
     LeakInfo *info = &r->value.ok;
     StackLineResult src = get_leak_line(info->file, info->line);
+    char size_str[32];
+    format_readable_size(size_str, sizeof(size_str), info->size);
 
     fprintf(stderr, ANSI_RED "Memory Leak Detected" ANSI_RESET ":\n");
     fprintf(stderr,
             "  " ANSI_BOLD "Size Class:" ANSI_RESET
-            " %zu bytes of type" ANSI_BOLD " %s " ANSI_RESET "\n",
-            info->size, src.status == READ_SUCCESS ? src.type : "unknown");
+            " %s bytes of type" ANSI_BOLD " %s " ANSI_RESET "\n",
+            size_str, src.status == READ_SUCCESS ? src.type : "unknown");
     fprintf(stderr,
             "  " ANSI_BOLD "Location:" ANSI_RESET "   " ANSI_DIM
             "%s:" ANSI_RESET "%d" ANSI_DIM ":" ANSI_RESET " inside " ANSI_BOLD
