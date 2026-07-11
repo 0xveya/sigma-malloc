@@ -98,6 +98,7 @@ pub fn build(b: *std.Build) void {
     translate_c.addIncludePath(b.path("include"));
 
     const main_tests = b.addTest(.{
+        .name = "allocator-regression",
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests.zig"),
             .target = target,
@@ -137,6 +138,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const fuzz_tests = b.addTest(.{
+        .name = "allocator-fuzz",
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests_fuzz.zig"),
             .target = target,
