@@ -2,6 +2,7 @@
 #include "../include/qol.h"
 #include "../include/sigma_malloc.h"
 #include "../include/utils.h"
+#include <stddef.h>
 #include <stdint.h>
 #include <sys/mman.h>
 #include <sys/types.h>
@@ -19,7 +20,8 @@ static cache_t *get_cache(size_t size) {
 static slab_t *slab_create(cache_t *cache) {
   size_t data_size = ALIGN_UP(cache->obj_size, sizeof(void *));
 
-  size_t slot_size = sizeof(obj_header_t) + data_size;
+  size_t user_offset = offsetof(obj_header_t, header) + sizeof(alloc_header_t);
+  size_t slot_size = user_offset + data_size;
 
   var *mem = mmap(NULL, SLAB_SIZE, PROT_READ | PROT_WRITE,
                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -52,7 +54,7 @@ static slab_t *slab_create(cache_t *cache) {
     hdr->header.magic = SLAB_MAGIC;
     hdr->header.type = ALLOC_TYPE_SLAB;
 
-    free_node_t *node = (free_node_t *)(slot_ptr + sizeof(obj_header_t));
+    free_node_t *node = (free_node_t *)(slot_ptr + user_offset);
 
     node->next = slab->free_list;
     slab->free_list = node;
@@ -103,6 +105,12 @@ void *slab_alloc(size_t size) {
 
   slab->free_list = node->next;
 
+  alloc_header_t *ah = alloc_header_from_user(node);
+  obj_header_t *hdr = SIGMA_CONTAINER_OF(ah, obj_header_t, header);
+  hdr->slab = slab;
+  ah->magic = SLAB_MAGIC;
+  ah->type = ALLOC_TYPE_SLAB;
+
   slab->used++;
 
   if (slab->used == slab->capacity) {
@@ -117,9 +125,8 @@ void slab_free(void *pp) {
   if (!pp)
     return;
 
-  obj_header_t *hdr = (obj_header_t *)((u8 *)pp - sizeof(obj_header_t));
-
-  alloc_header_t *ah = &hdr->header;
+  alloc_header_t *ah = alloc_header_from_user(pp);
+  obj_header_t *hdr = SIGMA_CONTAINER_OF(ah, obj_header_t, header);
 
   if (ah->magic != SLAB_MAGIC)
     panic("slab_free: invalid magic (double free or corruption)");

@@ -3,6 +3,7 @@
 #include "../include/sigma_malloc.h"
 #include "../include/slab.h"
 #include "../include/utils.h"
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -102,6 +103,15 @@ void leak_push(LeakResult r) {
     g_leaks[g_leak_count++] = r;
 }
 
+int sigma_debug_enabled(void) { return SIGMA_DEBUG; }
+
+void sigma_debug_reset_leaks(void) {
+  g_leak_count = 0;
+  memset(g_leaks, 0, sizeof(g_leaks));
+}
+
+usize sigma_debug_leak_count(void) { return g_leak_count; }
+
 #if SIGMA_DEBUG
 static void collect_slab_leaks(void) {
   for (usize i = 0; i < NUM_CACHES; i++) {
@@ -112,13 +122,14 @@ static void collect_slab_leaks(void) {
       slab_t *slab = slabs_to_check[s_idx];
       while (slab) {
         u8 *obj_start = (u8 *)slab + ALIGN_UP(sizeof(slab_t), sizeof(void *));
-        usize slot_size =
-            sizeof(obj_header_t) + ALIGN_UP(cache->obj_size, sizeof(void *));
+        usize user_offset =
+            offsetof(obj_header_t, header) + sizeof(alloc_header_t);
+        usize slot_size = user_offset + ALIGN_UP(cache->obj_size, sizeof(void *));
 
         for (usize j = 0; j < slab->capacity; j++) {
           u8 *slot = obj_start + j * slot_size;
           obj_header_t *hdr = (obj_header_t *)slot;
-          void *user = slot + sizeof(obj_header_t);
+          void *user = slot + user_offset;
 
           if (!is_ptr_in_freelist(slab->free_list, user)) {
             bool is_large_tracking_infrastructure = false;
@@ -194,7 +205,8 @@ static void traverse_buddy_nodes(buddy_pool_t *pool, usize index,
               .func = hdr->alloc_func,
               .line = hdr->alloc_line,
               .size = (1ULL << (relative_order + BUDDY_MIN_ORDER)) -
-                      sizeof(buddy_header_t),
+                      offsetof(buddy_header_t, header) -
+                      sizeof(alloc_header_t),
           }});
     }
     return;
@@ -233,7 +245,9 @@ static void collect_large_leaks(void) {
                                .file = file,
                                .func = meta->alloc_func,
                                .line = meta->alloc_line,
-                               .size = node->mmap_size - sizeof(large_header_t),
+                               .size = node->mmap_size -
+                                       offsetof(large_header_t, header) -
+                                       sizeof(alloc_header_t),
                            }});
 
     node = node->next;
@@ -242,15 +256,28 @@ static void collect_large_leaks(void) {
 
 #endif
 
+usize sigma_debug_collect_leaks(void) {
+  sigma_debug_reset_leaks();
+
+#if SIGMA_DEBUG
+  if (!g_alloc.initialized || !g_alloc.is_debug)
+    return 0;
+
+  collect_slab_leaks();
+  collect_buddy_leaks(&g_alloc.buddy_pool);
+  collect_large_leaks();
+#endif
+
+  return g_leak_count;
+}
+
 #if SIGMA_DEBUG
 [[gnu::destructor]]
 void show_leak_issues(void) {
   if (!g_alloc.initialized || !g_alloc.is_debug)
     return;
 
-  collect_slab_leaks();
-  collect_buddy_leaks(&g_alloc.buddy_pool);
-  collect_large_leaks();
+  sigma_debug_collect_leaks();
 
   for (usize i = 0; i < g_leak_count; i++) {
     LeakResult *r = &g_leaks[i];

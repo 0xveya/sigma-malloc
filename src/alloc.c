@@ -3,6 +3,7 @@
 #include "../include/large.h"
 #include "../include/sigma_malloc.h"
 #include "../include/slab.h"
+#include <stddef.h>
 #include <sys/mman.h>
 
 allocator_t g_alloc = {0};
@@ -36,7 +37,9 @@ static void allocator_init(void) {
   g_alloc.initialized = true;
 }
 
-#define BUDDY_MAX_PAYLOAD (4 * 1024 * 1024 - sizeof(buddy_header_t))
+#define BUDDY_MAX_PAYLOAD                                                       \
+  (4 * 1024 * 1024 - offsetof(buddy_header_t, header) -                       \
+   sizeof(alloc_header_t))
 
 void *balls_debug_backend(usize size, const char *file, const char *func,
                           i32 line) {
@@ -47,20 +50,21 @@ void *balls_debug_backend(usize size, const char *file, const char *func,
 
 #if SIGMA_DEBUG
   if (size <= MAX_SLAB_OBJ_SIZE) {
-    obj_header_t *hdr = (obj_header_t *)((u8 *)ptr - sizeof(obj_header_t));
+    alloc_header_t *ah = alloc_header_from_user(ptr);
+    obj_header_t *hdr = SIGMA_CONTAINER_OF(ah, obj_header_t, header);
     hdr->alloc_file = file;
     hdr->alloc_func = func;
     hdr->alloc_line = line;
   } else if (size <= BUDDY_MAX_PAYLOAD) {
 
-    buddy_header_t *hdr =
-        (buddy_header_t *)((u8 *)ptr - sizeof(buddy_header_t));
+    alloc_header_t *ah = alloc_header_from_user(ptr);
+    buddy_header_t *hdr = SIGMA_CONTAINER_OF(ah, buddy_header_t, header);
     hdr->alloc_file = file;
     hdr->alloc_func = func;
     hdr->alloc_line = line;
   } else {
-    large_header_t *hdr =
-        (large_header_t *)((u8 *)ptr - sizeof(large_header_t));
+    alloc_header_t *ah = alloc_header_from_user(ptr);
+    large_header_t *hdr = SIGMA_CONTAINER_OF(ah, large_header_t, header);
 
     hdr->meta->alloc_file = file;
     hdr->meta->alloc_func = func;

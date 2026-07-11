@@ -1,9 +1,20 @@
 #include "../include/buddy.h"
 #include "../include/qol.h"
 #include "../include/utils.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
+
+static inline usize floor_log2_usize(usize value) {
+  return (usize)((sizeof(usize) * 8U - 1U) - (usize)__builtin_clzl(value));
+}
+
+static inline usize ceil_log2_usize(usize value) {
+  if (value <= 1)
+    return 0;
+  return floor_log2_usize(value - 1) + 1;
+}
 
 buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
                                 usize pool_size) {
@@ -27,8 +38,7 @@ buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
     return NULL;
   }
 
-  usize root_abs_order =
-      (usize)((sizeof(usize) * 8U - 1U) - (usize)__builtin_clzl(usable_size));
+  usize root_abs_order = floor_log2_usize(usable_size);
 
   if (root_abs_order > BUDDY_MAX_ORDER) {
     root_abs_order = BUDDY_MAX_ORDER;
@@ -64,7 +74,8 @@ buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
 }
 
 static inline usize size_to_order(usize size) {
-  usize total_size = size + sizeof(buddy_header_t);
+  usize total_size =
+      size + offsetof(buddy_header_t, header) + sizeof(alloc_header_t);
 
   if (total_size <= PAGE_SIZE) {
     return 0;
@@ -74,8 +85,7 @@ static inline usize size_to_order(usize size) {
     return 6767;
   }
 
-  //  find the next highest power of two
-  usize power = (usize)(32U - (u32)__builtin_clz((u32)total_size - 1));
+  usize power = ceil_log2_usize(total_size);
 
   return power - BUDDY_MIN_ORDER;
 }
@@ -165,7 +175,8 @@ void *buddy_alloc_internal(buddy_pool_t *pool, usize size, const char *file,
     return NULL;
 
 #if SIGMA_DEBUG
-  buddy_header_t *hdr = (buddy_header_t *)((u8 *)ptr - sizeof(buddy_header_t));
+  alloc_header_t *ah = alloc_header_from_user(ptr);
+  buddy_header_t *hdr = SIGMA_CONTAINER_OF(ah, buddy_header_t, header);
 
   hdr->alloc_file = file;
   hdr->alloc_func = func;
@@ -183,7 +194,6 @@ void *buddy_alloc(buddy_pool_t *pool, usize size) {
   var target_order = size_to_order(size);
 
   if (target_order >= BUDDY_NUM_ORDERS) {
-    printf("target order too large: %zu\n", target_order);
     return NULL;
   }
 
@@ -226,16 +236,15 @@ void *buddy_alloc(buddy_pool_t *pool, usize size) {
   header->header.magic = BUDDY_MAGIC;
   header->header.type = ALLOC_TYPE_BUDDY;
 
-  return (void *)((uptr)block + sizeof(buddy_header_t));
+  return (void *)((u8 *)&header->header + sizeof(alloc_header_t));
 }
 
 void buddy_free(buddy_pool_t *pool, void *pp) {
   if (!pp)
     return;
 
-  buddy_header_t *hdr = (buddy_header_t *)((u8 *)pp - sizeof(buddy_header_t));
-
-  alloc_header_t *ah = &hdr->header;
+  alloc_header_t *ah = alloc_header_from_user(pp);
+  buddy_header_t *hdr = SIGMA_CONTAINER_OF(ah, buddy_header_t, header);
 
   if (ah->magic != BUDDY_MAGIC)
     panic("buddy_free: invalid magic (double free/corruption)");

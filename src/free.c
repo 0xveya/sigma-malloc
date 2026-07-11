@@ -10,7 +10,7 @@ void cock(void *pp) {
   if (!pp)
     return;
 
-  alloc_header_t *ah = (alloc_header_t *)((u8 *)pp - sizeof(alloc_header_t));
+  alloc_header_t *ah = alloc_header_from_user(pp);
 
   switch (ah->type) {
   case ALLOC_TYPE_SLAB:
@@ -18,9 +18,6 @@ void cock(void *pp) {
     break;
 
   case ALLOC_TYPE_BUDDY:
-    printf("[COCK DEBUG] Routing to buddy_free: ptr %p | Magic: 0x%X\n", pp,
-           ah->magic);
-    fflush(stdout);
     buddy_free(&g_alloc.buddy_pool, pp);
     break;
 
@@ -29,9 +26,6 @@ void cock(void *pp) {
     break;
 
   default:
-    printf("[COCK FATAL] Invalid memory block signature: Type %d, Magic 0x%X\n",
-           ah->type, ah->magic);
-    fflush(stdout);
     panic("invalid pointer");
   }
 }

@@ -42,9 +42,9 @@
  * ============================================================================
  */
 
-#include "./common.h"
-#include "./debug.h"
-#include "./qol.h"
+#include "common.h"
+#include "debug.h"
+#include "qol.h"
 #include <stddef.h>
 #include <stdint.h>
 

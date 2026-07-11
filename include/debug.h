@@ -23,8 +23,8 @@
 #if SIGMA_DEBUG
 #define balls_debug_tag(ptr)                                                   \
   do {                                                                         \
-    obj_header_t *__hdr =                                                      \
-        (obj_header_t *)((uint8_t *)(ptr) - sizeof(obj_header_t));             \
+    alloc_header_t *__ah = alloc_header_from_user(ptr);                        \
+    obj_header_t *__hdr = SIGMA_CONTAINER_OF(__ah, obj_header_t, header);      \
     __hdr->alloc_file = __FILE__;                                              \
     __hdr->alloc_func = __func__;                                              \
     __hdr->alloc_line = __LINE__;                                              \
@@ -62,3 +62,8 @@ typedef struct {
 #define MAX_LEAKS 4096
 static LeakResult g_leaks[MAX_LEAKS];
 static usize g_leak_count = 0;
+
+int sigma_debug_enabled(void);
+void sigma_debug_reset_leaks(void);
+usize sigma_debug_collect_leaks(void);
+usize sigma_debug_leak_count(void);

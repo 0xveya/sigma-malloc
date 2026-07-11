@@ -1,9 +1,10 @@
 #pragma once
 
-#include "./buddy.h"
-#include "./slab.h"
+#include "buddy.h"
+#include "debug.h"
 #include "large.h"
 #include "qol.h"
+#include "slab.h"
 
 // global allocator
 typedef struct allocator {

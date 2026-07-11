@@ -111,7 +111,7 @@ pub fn build(b: *std.Build) void {
         }),
         .test_runner = .{
             .path = b.path("test_runner.zig"),
-            .mode = .server,
+            .mode = .simple,
         },
     });
     main_tests.use_llvm = true;
@@ -136,9 +136,46 @@ pub fn build(b: *std.Build) void {
         .flags = active_test_flags,
     });
 
+    const fuzz_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests_fuzz.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{
+                    .name = "c",
+                    .module = translate_c.createModule(),
+                },
+            },
+        }),
+        .test_runner = .{
+            .path = b.path("test_runner.zig"),
+            .mode = .server,
+        },
+    });
+    fuzz_tests.use_llvm = true;
+    fuzz_tests.bundle_compiler_rt = true;
+    const fuzz_mod = fuzz_tests.root_module;
+    fuzz_mod.link_libc = true;
+    fuzz_mod.addIncludePath(b.path("include"));
+    if (lib_path) |lp| {
+        fuzz_mod.addLibraryPath(std.Build.LazyPath{ .cwd_relative = lp });
+    }
+    fuzz_mod.linkSystemLibrary("BlocksRuntime", .{});
+    fuzz_mod.addCMacro("SIGMA_TESTING", "1");
+    fuzz_mod.addCSourceFiles(.{
+        .files = test_harness_files.items,
+        .flags = active_test_flags,
+    });
+
+    const run_fuzz_tests = b.addRunArtifact(fuzz_tests);
     const run_unit_tests = b.addRunArtifact(main_tests);
-    const test_step = b.step("test", "Run unit and fuzz tests");
+    const test_step = b.step("test", "Run allocator regression and fuzz tests");
     test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&run_fuzz_tests.step);
+
+    const fuzz_step = b.step("alloc-fuzz", "Run allocator fuzz tests; use with --fuzz=N for fuzzing");
+    fuzz_step.dependOn(&run_fuzz_tests.step);
 
     const test_c_path = "test.c";
     var test_exists = false;

@@ -3,10 +3,12 @@
 #include "../include/sigma_malloc.h"
 #include "../include/slab.h"
 
+#include <stddef.h>
 #include <sys/mman.h>
 #include <unistd.h>
 void *large_alloc(usize size) {
-  usize total_size = size + sizeof(large_header_t);
+  usize total_size =
+      size + offsetof(large_header_t, header) + sizeof(alloc_header_t);
   usize page_size = sysconf(_SC_PAGESIZE);
   usize aligned_size = (total_size + page_size - 1) & ~(page_size - 1);
 
@@ -48,15 +50,15 @@ void *large_alloc(usize size) {
   }
   g_alloc.large_allocs_head = node;
 
-  return (void *)((u8 *)mmap_ptr + sizeof(large_header_t));
+  return (void *)((u8 *)&header->header + sizeof(alloc_header_t));
 }
 
 void large_free(void *ptr) {
   if (!ptr)
     return;
 
-  large_header_t *header =
-      (large_header_t *)((u8 *)ptr - sizeof(large_header_t));
+  alloc_header_t *ah = alloc_header_from_user(ptr);
+  large_header_t *header = SIGMA_CONTAINER_OF(ah, large_header_t, header);
   large_metadata_t *meta = header->meta;
   large_node_t *node = meta->node;
 
