@@ -1,45 +1,23 @@
 #pragma once
 
 /*
- * buddy alloc shi
+ * AI-generated diagram (the author was lazy): per-arena buddy pool.
  *
- * This allocator manages a 4 MB virtual memory block pool using an implicit
- * binary tree tracker stored in a flat bitmap.
+ * extent backing mapping
+ * ┌──────────── tree metadata ────────────┬──── usable buddy blocks ──────┐
+ * │ [4 MiB] split/free/full binary tree    │ order 22: one 4 MiB block    │
+ * │                                        │ order 21: two 2 MiB blocks   │
+ * │                                        │ ... order 12: 4 KiB blocks   │
+ * └────────────────────────────────────────┴──────────────────────────────┘
  *
- * [Memory Hierarchy Flow]
- * OS Kernel (mmap) ---> 4 MB Chunks ---> Buddy Allocator ---> 16 KB Slabs
- * |
- * User Allocation <--- Thread-Local Fast Cache <--- Slab Alloc <---+
+ * free block:      [ buddy_block_t next/prev | unused space ]
+ * allocated block: [ buddy_header_t owner arena/pool/order | user payload ]
+ *                                                ^
+ *                                                returned pointer
  *
- * [Implicit Binary Tree Structure]
- * Order 22 (4 MB)  |                   [ Node 0 ]
- * |                   /        \
- * Order 21 (2 MB)  |           [ Node 1 ]      [ Node 2 ]
- * |            /      \         /      \
- * ...              |          ...      ...     ...      ...
- * |          /          \     /          \
- * Order 12 (4 KB)  |     [ Node 1023 ] [ Node 1024 ] ... [ Node 2046 ]
- * (Leaves match physical hardware page sizes)
- *
- * yes llm go brr for the thing bellow no way i type all of that out
- *
- * [Allocated vs. Free Memory Block Layout]
- * * FREE BLOCK (Lives in pool->free_lists[order]):
- * ┌────────────────────────────────────────────────────────────────────────┐
- * │ buddy_block_t { *next, *prev }  |          Unused Idle Space           │
- * └────────────────────────────────────────────────────────────────────────┘
- * * ALLOCATED BLOCK (Handed to Slab Allocator or Large User Allocation):
- * ┌───────────────────────────┬────────────────────────────────────────────┐
- * │ buddy_header_t {          │                                            │
- * │   uint8_t order;          │  User-usable Payload Area                  │
- * │   uint8_t magic;          │  (Pointers returned to user start here)    │
- * │   DEBUG_INFO...           │                                            │
- * │ }                         │                                            │
- * └───────────────────────────┴────────────────────────────────────────────┘
- * ▲                           ▲
- * │                           └─ User Pointer (Aligned to boundary)
- * └─ Raw Block Address
- * ============================================================================
+ * Buddy serves 1025-byte through near-4-MiB requests.  It also supplies
+ * 16-KiB regions to slabs. Each arena owns its pool; remote frees are queued
+ * for the owning thread rather than mutating its pool concurrently.
  */
 
 #include "common.h"
@@ -61,12 +39,23 @@ typedef enum buddy_node_state {
   BUDDY_NODE_FULL
 } buddy_node_state_t;
 
+#define BUDDY_TREE_NODE_COUNT ((2 * (BUDDY_POOL_SIZE / PAGE_SIZE)) - 1)
+#define BUDDY_TREE_SIZE                                                        \
+  ALIGN_UP(BUDDY_TREE_NODE_COUNT * sizeof(buddy_node_state_t), PAGE_SIZE)
+#define BUDDY_BACKING_SIZE (BUDDY_TREE_SIZE + BUDDY_POOL_SIZE)
+
+typedef struct arena arena_t;
+typedef struct buddy_pool buddy_pool_t;
+
 typedef struct buddy_header {
 #if SIGMA_DEBUG
   const char *alloc_file;
   const char *alloc_func;
   i32 alloc_line;
 #endif
+  arena_t *arena;
+  buddy_pool_t *pool;
+  bool is_slab_region;
   u8 order;
   alloc_header_t header;
 } buddy_header_t;
@@ -76,7 +65,7 @@ typedef struct buddy_block {
   struct buddy_block *prev;
 } buddy_block_t;
 
-typedef struct buddy_pool {
+struct buddy_pool {
   void *memory_start; // ptr returned by the original mmap
   void *memory_end;
   buddy_node_state_t *tree;
@@ -85,7 +74,7 @@ typedef struct buddy_pool {
   buddy_block_t *free_lists[BUDDY_NUM_ORDERS];
 
   void *usable_start;
-} buddy_pool_t;
+};
 
 #if SIGMA_DEBUG
 #define buddy_alloc_debug(pool, size)                                          \

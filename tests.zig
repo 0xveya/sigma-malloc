@@ -40,6 +40,14 @@ fn allocChecked(size: usize) !*anyopaque {
     return ptr.?;
 }
 
+fn freeFromAnotherThread(ptrs: []const *anyopaque) void {
+    for (ptrs) |ptr| c.cock(ptr);
+}
+
+fn allocateLargeFromThread(slot: *?*anyopaque) void {
+    slot.* = c.balls_backend(4 * 1024 * 1024 + 1);
+}
+
 test "slab: every size class allocates writes and frees" {
     for (size_classes) |sc| {
         const ptr = try allocChecked(sc.request);
@@ -91,6 +99,51 @@ test "slab: boundary sizes stay reusable" {
     }
 
     for (ptrs) |ptr| c.cock(ptr);
+}
+
+test "slab: concurrent cross-thread frees are reclaimed by the owning arena" {
+    var ptrs: [128]*anyopaque = undefined;
+    for (&ptrs) |*ptr| {
+        ptr.* = try allocChecked(64);
+    }
+
+    var threads: [4]std.Thread = undefined;
+    for (0..threads.len) |i| {
+        const start = i * 32;
+        threads[i] = try std.Thread.spawn(.{}, freeFromAnotherThread, .{ptrs[start .. start + 32]});
+    }
+    for (threads) |thread| thread.join();
+
+    // The owner drains remote frees every 64 allocations.  These allocations
+    // must remain valid while that drain returns the remotely-freed objects.
+    var replacements: [64]*anyopaque = undefined;
+    for (&replacements) |*ptr| {
+        ptr.* = try allocChecked(64);
+        fill(ptr.*, 64, 0xa5);
+    }
+    for (replacements) |ptr| c.cock(ptr);
+}
+
+test "buddy: concurrent cross-thread frees are reclaimed by the owning arena" {
+    var ptrs: [64]*anyopaque = undefined;
+    for (&ptrs) |*ptr| {
+        ptr.* = try allocChecked(4096);
+    }
+
+    var threads: [4]std.Thread = undefined;
+    for (0..threads.len) |i| {
+        const start = i * 16;
+        threads[i] = try std.Thread.spawn(.{}, freeFromAnotherThread, .{ptrs[start .. start + 16]});
+    }
+    for (threads) |thread| thread.join();
+
+    // These allocations run on the owning thread and drain the remote stack.
+    var replacements: [64]*anyopaque = undefined;
+    for (&replacements) |*ptr| {
+        ptr.* = try allocChecked(4096);
+        fill(ptr.*, 4096, 0x5a);
+    }
+    for (replacements) |ptr| c.cock(ptr);
 }
 
 test "buddy: boundary sizes allocate write and free" {
@@ -150,6 +203,25 @@ test "debug: leak collector finds slab buddy and large leaks" {
 
     try std.testing.expectEqual(@as(usize, 0), c.sigma_debug_collect_leaks());
     c.sigma_debug_reset_leaks();
+}
+
+test "debug: concurrent large allocations keep leak tracking consistent" {
+    if (c.sigma_debug_enabled() == 0) return error.SkipZigTest;
+
+    c.sigma_debug_reset_leaks();
+    var ptrs: [8]?*anyopaque = .{null} ** 8;
+    var threads: [ptrs.len]std.Thread = undefined;
+
+    for (&ptrs, 0..) |*ptr, i| {
+        threads[i] = try std.Thread.spawn(.{}, allocateLargeFromThread, .{ptr});
+    }
+    for (threads) |thread| thread.join();
+
+    for (ptrs) |ptr| try std.testing.expect(ptr != null);
+    try std.testing.expectEqual(ptrs.len, c.sigma_debug_collect_leaks());
+
+    for (ptrs) |ptr| c.cock(ptr.?);
+    try std.testing.expectEqual(@as(usize, 0), c.sigma_debug_collect_leaks());
 }
 
 test "mixed fragmentation: slab and buddy holes can be refilled" {

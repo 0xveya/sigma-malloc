@@ -25,4 +25,4 @@ static inline alloc_header_t *alloc_header_from_user(void *ptr) {
 }
 
 #define SIGMA_CONTAINER_OF(ptr, type, member)                                  \
-  ((type *)((u8 *)(ptr)-offsetof(type, member)))
+  ((type *)((u8 *)(ptr) - offsetof(type, member)))

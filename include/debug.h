@@ -63,7 +63,7 @@ typedef struct {
 static LeakResult g_leaks[MAX_LEAKS];
 static usize g_leak_count = 0;
 
-int sigma_debug_enabled(void);
-void sigma_debug_reset_leaks(void);
 usize sigma_debug_collect_leaks(void);
+int sigma_debug_enabled(void);
 usize sigma_debug_leak_count(void);
+void sigma_debug_reset_leaks(void);

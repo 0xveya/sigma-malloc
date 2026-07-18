@@ -1,6 +1,6 @@
+#include "../include/arena.h"
 #include "../include/buddy.h"
 #include "../include/large.h"
-#include "../include/qol.h"
 #include "../include/sigma_malloc.h"
 #include "../include/slab.h"
 #include "../include/utils.h"
@@ -13,13 +13,31 @@ void cock(void *pp) {
   alloc_header_t *ah = alloc_header_from_user(pp);
 
   switch (ah->type) {
-  case ALLOC_TYPE_SLAB:
-    slab_free(pp);
-    break;
+  case ALLOC_TYPE_SLAB: {
+    obj_header_t *header = SIGMA_CONTAINER_OF(ah, obj_header_t, header);
+    slab_t *slab = header->slab;
+    arena_t *owner = slab->arena;
+    arena_t *current = arena_get_existing();
 
-  case ALLOC_TYPE_BUDDY:
-    buddy_free(&g_alloc.buddy_pool, pp);
+    if (current == owner) {
+      arena_free_local(owner, pp);
+    } else {
+      arena_remote_free(owner, pp);
+    }
     break;
+  }
+
+  case ALLOC_TYPE_BUDDY: {
+    buddy_header_t *header = SIGMA_CONTAINER_OF(ah, buddy_header_t, header);
+    arena_t *owner = header->arena;
+    arena_t *current = arena_get_existing();
+    if (current == owner) {
+      arena_free_buddy_local(owner, pp);
+    } else {
+      arena_remote_free(owner, pp);
+    }
+    break;
+  }
 
   case ALLOC_TYPE_LARGE:
     large_free(pp);

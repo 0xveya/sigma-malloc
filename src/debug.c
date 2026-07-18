@@ -1,4 +1,5 @@
 #include "../include/debug.h"
+#include "../include/arena.h"
 #include "../include/qol.h"
 #include "../include/sigma_malloc.h"
 #include "../include/slab.h"
@@ -113,9 +114,12 @@ void sigma_debug_reset_leaks(void) {
 usize sigma_debug_leak_count(void) { return g_leak_count; }
 
 #if SIGMA_DEBUG
-static void collect_slab_leaks(void) {
+static void collect_slab_leaks(arena_t *arena) {
+  if (arena == NULL) {
+    return;
+  }
   for (usize i = 0; i < NUM_CACHES; i++) {
-    cache_t *cache = &g_alloc.caches[i];
+    cache_t *cache = &arena->caches[i];
     slab_t *slabs_to_check[] = {cache->partial, cache->full};
 
     for (i32 s_idx = 0; s_idx < 2; s_idx++) {
@@ -124,7 +128,8 @@ static void collect_slab_leaks(void) {
         u8 *obj_start = (u8 *)slab + ALIGN_UP(sizeof(slab_t), sizeof(void *));
         usize user_offset =
             offsetof(obj_header_t, header) + sizeof(alloc_header_t);
-        usize slot_size = user_offset + ALIGN_UP(cache->obj_size, sizeof(void *));
+        usize slot_size =
+            user_offset + ALIGN_UP(cache->obj_size, sizeof(void *));
 
         for (usize j = 0; j < slab->capacity; j++) {
           u8 *slot = obj_start + j * slot_size;
@@ -192,7 +197,8 @@ static void traverse_buddy_nodes(buddy_pool_t *pool, usize index,
     void *block_ptr = node_index_to_ptr(pool, index, relative_order);
     buddy_header_t *hdr = (buddy_header_t *)block_ptr;
 
-    if (hdr->header.magic == BUDDY_MAGIC && hdr->order == relative_order) {
+    if (hdr->header.magic == BUDDY_MAGIC && hdr->order == relative_order &&
+        !hdr->is_slab_region) {
       const char *file = hdr->alloc_file
                              ? (strrchr(hdr->alloc_file, '/')
                                     ? strrchr(hdr->alloc_file, '/') + 1
@@ -205,8 +211,7 @@ static void traverse_buddy_nodes(buddy_pool_t *pool, usize index,
               .func = hdr->alloc_func,
               .line = hdr->alloc_line,
               .size = (1ULL << (relative_order + BUDDY_MIN_ORDER)) -
-                      offsetof(buddy_header_t, header) -
-                      sizeof(alloc_header_t),
+                      offsetof(buddy_header_t, header) - sizeof(alloc_header_t),
           }});
     }
     return;
@@ -228,7 +233,18 @@ void collect_buddy_leaks(buddy_pool_t *pool) {
   traverse_buddy_nodes(pool, 0, BUDDY_NUM_ORDERS - 1);
 }
 
+static void collect_arena_buddy_leaks(arena_t *arena) {
+  if (arena == NULL) {
+    return;
+  }
+  for (arena_extent_t *extent = arena->extents; extent != NULL;
+       extent = extent->next) {
+    collect_buddy_leaks(&extent->buddy);
+  }
+}
+
 static void collect_large_leaks(void) {
+  large_debug_list_lock();
   large_node_t *node = g_alloc.large_allocs_head;
   while (node) {
     large_header_t *header = (large_header_t *)node->mmap_ptr;
@@ -252,6 +268,7 @@ static void collect_large_leaks(void) {
 
     node = node->next;
   }
+  large_debug_list_unlock();
 }
 
 #endif
@@ -263,8 +280,8 @@ usize sigma_debug_collect_leaks(void) {
   if (!g_alloc.initialized || !g_alloc.is_debug)
     return 0;
 
-  collect_slab_leaks();
-  collect_buddy_leaks(&g_alloc.buddy_pool);
+  collect_slab_leaks(arena_get_existing());
+  collect_arena_buddy_leaks(arena_get_existing());
   collect_large_leaks();
 #endif
 

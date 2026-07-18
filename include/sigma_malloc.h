@@ -1,18 +1,13 @@
 #pragma once
 
-#include "buddy.h"
 #include "debug.h"
 #include "large.h"
 #include "qol.h"
-#include "slab.h"
 
-// global allocator
 typedef struct allocator {
   bool initialized;
   bool is_debug;
 
-  cache_t caches[NUM_CACHES];
-  buddy_pool_t buddy_pool;
   large_node_t *large_allocs_head;
 } allocator_t;
 

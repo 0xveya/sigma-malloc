@@ -1,45 +1,21 @@
 #pragma once
 
 /*
- * slab alloc shi
+ * AI-generated diagram (the author was lazy): per-thread slab allocation.
  *
- * Handles small, highly-frequent allocations <= 1024 Bytes. keeps internal
- * fragmentation low by packing identical size classes into 16 KB pages.
+ * arena cache (one size class)              one SLAB_SIZE region (16 KiB)
+ * ┌───────────────┐                         ┌─────────────────────────────┐
+ * │ partial slabs ├────────────────────────►│ slab_t                      │
+ * │ full slabs    │                         ├──────────────┬──────────────┤
+ * └───────────────┘                         │ obj header   │ user payload │
+ *                                           │ { slab * }   │ free_node *  │
+ *                                           ├──────────────┼──────────────┤
+ *                                           │ obj header   │ user payload │
+ *                                           └──────────────┴──────────────┘
  *
- * [Slab Allocation Lifecycle Pool]
- * cache_t ->  [ partial ] <---> [ partial ] <---> [ partial ]
- * [  full   ] <---> [  full   ] <---> [  full   ]
- * [  empty  ] <---> [  empty  ] <---> [  empty  ]  (Freed to Buddy)
- *
- * [Physical Layout of a 16 KB Slab Region]
- * A single SLAB_SIZE (16 KB) memory region obtained from buddy_alloc(16384):
- *
- * yes llm go brr for the thing bellow no way i type all of that out
- *
- * ┌────────────────────────────────────────────────────────────────────────┐
- * │ slab_t Header Struct                                                   │
- * │  - *prev, *next pointers for the list state                            │
- * │  - *owner cache_t size-class reference                                 │
- * │  - used / capacity metrics                                             │
- * │  - *free_list head pointer ─────────────────┐                          │
- * ├─────────────────────────────────────────────┼──────────────────────────┤
- * │ Object Slot 0                               │                          │
- * │  ┌───────────────────┬──────────────────────▼────────────────────────┐ │
- * │  │ obj_header_t      │ free_node_t { *next } ───> Points to Slot 2   │ │
- * │  │ (Backptr to slab) │ (Overwritten with real user data when active) │ │
- * │  └───────────────────┴───────────────────────────────────────────────┘ │
- * ├────────────────────────────────────────────────────────────────────────┤
- * │ Object Slot 1 (Currently Allocated / Active)                           │
- * │  ┌───────────────────┬───────────────────────────────────────────────┐ │
- * │  │ obj_header_t      │ ACTIVE USER DATA POOL                         │ │
- * │  │ (Backptr to slab) │                                               │ │
- * │  └───────────────────┴───────────────────────────────────────────────┘ │
- * │                      ▲                                                 │
- * │                      └─ Pointer returned to user applications          │
- * ├────────────────────────────────────────────────────────────────────────┤
- * │ Object Slot 2 ... (Embedded free list continues)                       │
- * └────────────────────────────────────────────────────────────────────────┘
- * ============================================================================
+ * Local free:  payload -> slab free list
+ * Remote free: payload -> owner arena's atomic remote stack -> local free list
+ * Empty slab:  slab_t + stored extent -> owning buddy pool
  */
 
 #include "common.h"
@@ -53,8 +29,10 @@
 #define MAX_SLAB_OBJ_SIZE 1024
 #define NUM_CACHES 8
 
-static const size_t g_size_classes[NUM_CACHES] = {16,  32,  64,  128,
-                                                  256, 512, 768, 1024};
+typedef struct arena arena_t;
+typedef struct arena_extent arena_extent_t;
+
+extern const usize g_size_classes[NUM_CACHES];
 
 typedef struct slab slab_t;
 typedef struct cache cache_t;
@@ -90,6 +68,8 @@ typedef struct slab {
   struct slab *prev;
   struct slab *next;
 
+  arena_t *arena;
+  arena_extent_t *extent;
   cache_t *owner;
 
   usize used;
@@ -98,5 +78,5 @@ typedef struct slab {
   free_node_t *free_list;
 } slab_t;
 
-void *slab_alloc(usize size);
-void slab_free(void *pp);
+void *slab_alloc(arena_t *arena, usize size);
+void slab_free_local(arena_t *arena, void *ptr);

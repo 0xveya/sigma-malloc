@@ -2,7 +2,6 @@
 #include "../include/qol.h"
 #include "../include/utils.h"
 #include <stddef.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 
@@ -18,6 +17,9 @@ static inline usize ceil_log2_usize(usize value) {
 
 buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
                                 usize pool_size) {
+  if (pool == NULL || raw_mem == NULL || pool_size < BUDDY_BACKING_SIZE) {
+    return NULL;
+  }
   pool->memory_start = raw_mem;
   pool->memory_end = (void *)((uptr)raw_mem + pool_size);
 
@@ -25,43 +27,14 @@ buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
     pool->free_lists[i] = NULL;
   }
 
-  var max_leaves = pool_size / PAGE_SIZE;
-  var total_nodes = (2 * max_leaves) - 1;
-  usize tree_size = ALIGN_UP(total_nodes * sizeof(buddy_node_state_t), 8);
-
   pool->tree = (buddy_node_state_t *)raw_mem;
+  var *usable_mem = (void *)((uptr)raw_mem + BUDDY_TREE_SIZE);
+  usize root_order = BUDDY_NUM_ORDERS - 1;
 
-  var *usable_mem = (void *)ALIGN_UP((uptr)raw_mem + tree_size, PAGE_SIZE);
-  usize usable_size = (uptr)pool->memory_end - (uptr)usable_mem;
-
-  if (usable_size < PAGE_SIZE) {
-    return NULL;
-  }
-
-  usize root_abs_order = floor_log2_usize(usable_size);
-
-  if (root_abs_order > BUDDY_MAX_ORDER) {
-    root_abs_order = BUDDY_MAX_ORDER;
-  }
-
-  if (root_abs_order < BUDDY_MIN_ORDER) {
-    return NULL;
-  }
-
-  usize root_order = root_abs_order - BUDDY_MIN_ORDER;
-  usize root_depth = (BUDDY_NUM_ORDERS - 1) - root_order;
-  usize root_node = (1ULL << root_depth) - 1;
-
-  for (usize i = 0; i < total_nodes; i++) {
+  for (usize i = 0; i < BUDDY_TREE_NODE_COUNT; i++) {
     pool->tree[i] = BUDDY_NODE_FULL;
   }
-  pool->tree[root_node] = BUDDY_NODE_FREE;
-
-  for (usize node = root_node; node > 0;) {
-    usize parent = (node - 1) / 2;
-    pool->tree[parent] = BUDDY_NODE_SPLIT;
-    node = parent;
-  }
+  pool->tree[0] = BUDDY_NODE_FREE;
 
   pool->usable_start = usable_mem;
   var *root_block = (buddy_block_t *)usable_mem;
@@ -233,6 +206,9 @@ void *buddy_alloc(buddy_pool_t *pool, usize size) {
 
   buddy_header_t *header = (buddy_header_t *)block;
   header->order = (u8)target_order;
+  header->arena = NULL;
+  header->pool = pool;
+  header->is_slab_region = false;
   header->header.magic = BUDDY_MAGIC;
   header->header.type = ALLOC_TYPE_BUDDY;
 

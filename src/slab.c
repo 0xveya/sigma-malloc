@@ -1,165 +1,153 @@
 #include "../include/slab.h"
-#include "../include/qol.h"
-#include "../include/sigma_malloc.h"
+#include "../include/arena.h"
 #include "../include/utils.h"
+
 #include <stddef.h>
-#include <stdint.h>
-#include <sys/mman.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include <string.h>
 
-static cache_t *get_cache(size_t size) {
-  for (size_t i = 0; i < NUM_CACHES; i++) {
-    if (size <= g_alloc.caches[i].obj_size)
-      return &g_alloc.caches[i];
+const usize g_size_classes[NUM_CACHES] = {16, 32, 64, 128, 256, 512, 768, 1024};
+
+static cache_t *get_cache(arena_t *arena, usize size) {
+  for (usize i = 0; i < NUM_CACHES; i++) {
+    if (size <= arena->caches[i].obj_size) {
+      return &arena->caches[i];
+    }
   }
-
   return NULL;
-}
-
-static slab_t *slab_create(cache_t *cache) {
-  size_t data_size = ALIGN_UP(cache->obj_size, sizeof(void *));
-
-  size_t user_offset = offsetof(obj_header_t, header) + sizeof(alloc_header_t);
-  size_t slot_size = user_offset + data_size;
-
-  var *mem = mmap(NULL, SLAB_SIZE, PROT_READ | PROT_WRITE,
-                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (mem == MAP_FAILED)
-    return NULL;
-
-  var *slab = (slab_t *)mem;
-  slab->owner = cache;
-  slab->prev = NULL;
-  slab->next = NULL;
-  slab->used = 0;
-  slab->free_list = NULL;
-
-  uint8_t *obj_start =
-      (uint8_t *)mem + ALIGN_UP(sizeof(slab_t), sizeof(void *));
-  size_t usable = SLAB_SIZE - (size_t)(obj_start - (uint8_t *)mem);
-
-  slab->capacity = usable / slot_size;
-
-  for (size_t i = 0; i < slab->capacity; i++) {
-    uint8_t *slot_ptr = obj_start + (i * slot_size);
-
-    var *hdr = (obj_header_t *)slot_ptr;
-#if SIGMA_DEBUG
-    hdr->alloc_file = NULL;
-    hdr->alloc_func = NULL;
-    hdr->alloc_line = 0;
-#endif
-    hdr->slab = slab;
-    hdr->header.magic = SLAB_MAGIC;
-    hdr->header.type = ALLOC_TYPE_SLAB;
-
-    free_node_t *node = (free_node_t *)(slot_ptr + user_offset);
-
-    node->next = slab->free_list;
-    slab->free_list = node;
-  }
-
-  return slab;
 }
 
 static inline void slab_push(slab_t **head, slab_t *slab) {
   slab->prev = NULL;
   slab->next = *head;
-
-  if (*head)
+  if (*head != NULL) {
     (*head)->prev = slab;
-
+  }
   *head = slab;
 }
 
 static inline void slab_remove(slab_t **head, slab_t *slab) {
-  if (slab->prev)
+  if (slab->prev != NULL) {
     slab->prev->next = slab->next;
-
-  if (slab->next)
+  }
+  if (slab->next != NULL) {
     slab->next->prev = slab->prev;
-
-  if (*head == slab)
+  }
+  if (*head == slab) {
     *head = slab->next;
-
+  }
   slab->prev = NULL;
   slab->next = NULL;
 }
 
-void *slab_alloc(size_t size) {
-  var *cache = get_cache(size);
-  if (!cache)
+static slab_t *slab_create(arena_t *arena, cache_t *cache) {
+  arena_extent_t *extent = NULL;
+  void *region = arena_alloc_slab_region(arena, &extent);
+  if (region == NULL) {
     return NULL;
-  var *slab = cache->partial;
-  if (!slab) {
-    slab = slab_create(cache);
+  }
 
-    if (!slab)
+  usize data_size = ALIGN_UP(cache->obj_size, sizeof(void *));
+  usize user_offset = offsetof(obj_header_t, header) + sizeof(alloc_header_t);
+  usize slot_size = user_offset + data_size;
+  slab_t *slab = region;
+  memset(slab, 0, sizeof(*slab));
+
+  slab->arena = arena;
+  slab->extent = extent;
+  slab->owner = cache;
+
+  u8 *obj_start = (u8 *)slab + ALIGN_UP(sizeof(*slab), sizeof(void *));
+  usize usable = SLAB_SIZE - (usize)(obj_start - (u8 *)slab);
+  slab->capacity = usable / slot_size;
+  if (slab->capacity == 0) {
+    arena_free_slab_region(arena, extent, slab);
+    return NULL;
+  }
+
+  for (usize i = 0; i < slab->capacity; i++) {
+    u8 *slot = obj_start + i * slot_size;
+    obj_header_t *header = (obj_header_t *)slot;
+    header->slab = slab;
+    header->header.magic = SLAB_MAGIC;
+    header->header.type = ALLOC_TYPE_SLAB;
+#if SIGMA_DEBUG
+    header->alloc_file = NULL;
+    header->alloc_func = NULL;
+    header->alloc_line = 0;
+#endif
+    free_node_t *node = (free_node_t *)(slot + user_offset);
+    node->next = slab->free_list;
+    slab->free_list = node;
+  }
+  return slab;
+}
+
+void *slab_alloc(arena_t *arena, usize size) {
+  cache_t *cache = get_cache(arena, size);
+  if (cache == NULL) {
+    return NULL;
+  }
+
+  slab_t *slab = cache->partial;
+  if (slab == NULL) {
+    slab = slab_create(arena, cache);
+    if (slab == NULL) {
       return NULL;
-
+    }
     slab_push(&cache->partial, slab);
   }
 
-  var *node = slab->free_list;
-
+  free_node_t *node = slab->free_list;
   slab->free_list = node->next;
-
-  alloc_header_t *ah = alloc_header_from_user(node);
-  obj_header_t *hdr = SIGMA_CONTAINER_OF(ah, obj_header_t, header);
-  hdr->slab = slab;
-  ah->magic = SLAB_MAGIC;
-  ah->type = ALLOC_TYPE_SLAB;
-
+  alloc_header_t *alloc_header = alloc_header_from_user(node);
+  obj_header_t *header = SIGMA_CONTAINER_OF(alloc_header, obj_header_t, header);
+  header->slab = slab;
+  alloc_header->magic = SLAB_MAGIC;
+  alloc_header->type = ALLOC_TYPE_SLAB;
   slab->used++;
 
   if (slab->used == slab->capacity) {
     slab_remove(&cache->partial, slab);
     slab_push(&cache->full, slab);
   }
-
   return node;
 }
 
-void slab_free(void *pp) {
-  if (!pp)
+void slab_free_local(arena_t *arena, void *ptr) {
+  if (arena == NULL || ptr == NULL) {
     return;
+  }
+  alloc_header_t *alloc_header = alloc_header_from_user(ptr);
+  obj_header_t *header = SIGMA_CONTAINER_OF(alloc_header, obj_header_t, header);
+  slab_t *slab = header->slab;
 
-  alloc_header_t *ah = alloc_header_from_user(pp);
-  obj_header_t *hdr = SIGMA_CONTAINER_OF(ah, obj_header_t, header);
-
-  if (ah->magic != SLAB_MAGIC)
-    panic("slab_free: invalid magic (double free or corruption)");
-
-  if (ah->type != ALLOC_TYPE_SLAB)
-    panic("slab_free: type mismatch");
-
-  ah->magic = 0;
-
+  if (alloc_header->magic != SLAB_MAGIC ||
+      alloc_header->type != ALLOC_TYPE_SLAB || slab == NULL ||
+      slab->arena != arena) {
+    panic("slab_free_local: invalid pointer, double free, or wrong arena");
+  }
+  alloc_header->magic = 0;
 #if SIGMA_DEBUG
-  hdr->alloc_file = NULL;
-  hdr->alloc_func = NULL;
-  hdr->alloc_line = 0;
+  header->alloc_file = NULL;
+  header->alloc_func = NULL;
+  header->alloc_line = 0;
 #endif
 
-  var *slab = hdr->slab;
-  var *cache = slab->owner;
-
-  bool was_full = (slab->used == slab->capacity);
-
-  var *node = (free_node_t *)pp;
+  cache_t *cache = slab->owner;
+  bool was_full = slab->used == slab->capacity;
+  free_node_t *node = ptr;
   node->next = slab->free_list;
   slab->free_list = node;
-
   slab->used--;
 
   if (was_full) {
     slab_remove(&cache->full, slab);
     slab_push(&cache->partial, slab);
   }
-
   if (slab->used == 0) {
+    arena_t *owner_arena = slab->arena;
+    arena_extent_t *extent = slab->extent;
     slab_remove(&cache->partial, slab);
-    slab_push(&cache->empty, slab);
+    arena_free_slab_region(owner_arena, extent, slab);
   }
 }

@@ -32,7 +32,7 @@ run = "zig std -p 8000 --no-open-browser"
 
 [tasks.compiledb]
 description = "generate compile_commands.json for neovim"
-run = "bear -- zig build -Doptimize=Debug"
+run = "make compiledb"
 
 [tasks.check]
 description = "check stuff"

@@ -1,4 +1,12 @@
-.PHONY: build dev test run dev-run std compiledb check format clean help
+.PHONY: build dev test run dev-run std compiledb compiledb-commands check format clean help
+
+MAKEFLAGS += -j
+
+C_SOURCES := main.c $(wildcard src/*.c)
+COMPILEDB_TARGETS := $(C_SOURCES:%=compiledb-%)
+COMPILEDB_FLAGS := -std=c23 -fblocks -Wall -Wextra -Wpedantic -Wno-auto-decl-extensions -Wshadow -Wconversion -Wdouble-promotion -Wformat=2 -Wundef -I include -DHORNY_MODE=1 -DNO_LEAK_REWARD=1 -DUSE_DEBUG_ALLOC=1
+
+.PHONY: $(COMPILEDB_TARGETS)
 
 # Default target when you just type 'make'
 all: dev-run
@@ -22,7 +30,12 @@ std:
 	zig std -p 8000 --no-open-browser
 
 compiledb:
-	bear -- zig build -Doptimize=Debug
+	compiledb --overwrite make compiledb-commands
+
+compiledb-commands: $(COMPILEDB_TARGETS)
+
+$(COMPILEDB_TARGETS):
+	clang $(COMPILEDB_FLAGS) -fsyntax-only $(patsubst compiledb-%,%,$@)
 
 check:
 	cppcheck --enable=all --suppress=missingIncludeSystem main.c src/*.c
