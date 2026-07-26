@@ -1,6 +1,5 @@
 app
 app-dev
-tests
 *.o
 *.out
 

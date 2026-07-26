@@ -13,8 +13,12 @@ description = "compile main (debug/dev build)"
 run = "zig build -Doptimize=Debug"
 
 [tasks.test]
-description = "compile and run tests (if test.c exists)"
-run = "zig build && [ -f zig-out/bin/tests ] && ./zig-out/bin/tests || echo 'No tests binary compiled (test.c not found)'"
+description = "compile and run allocator tests"
+run = "zig build test"
+
+[tasks.stress]
+description = "run the allocator stress-test stub"
+run = "zig build -Doptimize=Debug stress"
 
 [tasks.run]
 description = "run release build"
@@ -44,4 +48,4 @@ run = "clang-format -i main.c src/*.c include/*.h"
 
 [tasks.clean]
 description = "remove build artifacts"
-run = "rm -rf zig-out .zig-cache compile_commands.json .bear-fingerprints app app-dev tests"
+run = "rm -rf zig-out .zig-cache compile_commands.json .bear-fingerprints app app-dev"

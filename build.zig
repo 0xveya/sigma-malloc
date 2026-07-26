@@ -179,53 +179,43 @@ pub fn build(b: *std.Build) void {
     const fuzz_step = b.step("alloc-fuzz", "Run allocator fuzz tests; use with --fuzz=N for fuzzing");
     fuzz_step.dependOn(&run_fuzz_tests.step);
 
-    const test_c_path = "test.c";
-    var test_exists = false;
-    if (std.Io.Dir.cwd().openFile(b.graph.io, test_c_path, .{})) |file| {
-        file.close(b.graph.io);
-        test_exists = true;
-    } else |_| {}
-
-    if (test_exists) {
-        const c_tests_exe = b.addExecutable(.{
-            .name = "tests",
-            .root_module = b.createModule(.{
-                .target = target,
-                .optimize = optimize,
-            }),
-        });
-        c_tests_exe.use_llvm = true;
-        const c_tests_mod = c_tests_exe.root_module;
-        c_tests_mod.link_libc = true;
-        c_tests_mod.addIncludePath(b.path("include"));
-        if (lib_path) |lp| {
-            c_tests_mod.addLibraryPath(std.Build.LazyPath{ .cwd_relative = lp });
-        }
-        c_tests_mod.linkSystemLibrary("BlocksRuntime", .{});
-        c_tests_mod.addCMacro("SIGMA_TESTING", "1");
-
-        const test_c_flags = [_][]const u8{
-            "-std=c23",
-            "-fblocks",
-            "-Wall",
-            "-Wextra",
-            "-Wpedantic",
-        };
-
-        var test_src_files = std.ArrayList([]const u8).empty;
-        defer test_src_files.deinit(b.allocator);
-
-        findCFiles(b.graph.io, b.allocator, ".", &test_src_files, &[_][]const u8{"main.c"}, false) catch @panic("failed to find test C files");
-
-        findCFiles(b.graph.io, b.allocator, "src", &test_src_files, &[_][]const u8{}, true) catch @panic("failed to find C files in src for tests");
-
-        c_tests_mod.addCSourceFiles(.{
-            .files = test_src_files.items,
-            .flags = &test_c_flags,
-        });
-
-        b.installArtifact(c_tests_exe);
+    const stress_exe = b.addExecutable(.{
+        .name = "allocator-stress",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    stress_exe.use_llvm = true;
+    const stress_mod = stress_exe.root_module;
+    stress_mod.link_libc = true;
+    stress_mod.addIncludePath(b.path("include"));
+    stress_mod.addIncludePath(b.path("tests/stress"));
+    if (lib_path) |lp| {
+        stress_mod.addLibraryPath(std.Build.LazyPath{ .cwd_relative = lp });
     }
+    stress_mod.linkSystemLibrary("BlocksRuntime", .{});
+    stress_mod.addCMacro("SIGMA_TESTING", "1");
+    if (use_debug_alloc) {
+        stress_mod.addCMacro("USE_DEBUG_ALLOC", "1");
+    }
+
+    var stress_src_files = std.ArrayList([]const u8).empty;
+    defer stress_src_files.deinit(b.allocator);
+    stress_src_files.append(b.allocator, "tests/stress/main.c") catch @panic("failed to add stress-test source");
+    findCFiles(b.graph.io, b.allocator, "src", &stress_src_files, &[_][]const u8{}, true) catch @panic("failed to find C files for stress test");
+    stress_mod.addCSourceFiles(.{
+        .files = stress_src_files.items,
+        .flags = active_test_flags,
+    });
+
+    b.installArtifact(stress_exe);
+    const run_stress = b.addRunArtifact(stress_exe);
+    if (b.args) |args| {
+        run_stress.addArgs(args);
+    }
+    const stress_step = b.step("stress", "Run the allocator stress-test stub");
+    stress_step.dependOn(&run_stress.step);
 }
 
 fn findCFiles(
