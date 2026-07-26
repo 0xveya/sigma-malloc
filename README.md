@@ -4,7 +4,7 @@ My fun side quest to learn more about memory allocation and C.
 
 ## About
 
-Besides learning more about this topic, the goal is to have my own `malloc` implementation for most common-core projects in 42.
+Besides learning more about this topic, the goal is to have my own `malloc` implementation for post common-core projects in 42.
 
 I want to create composable allocators on top of the generic core to have a Zig-like allocator experience, together with a debug mode to detect leaks. For example, I want to be able to create an arena allocator from the generic one, like in Zig, and pass the allocator into functions to handle lifetimes better.
 
