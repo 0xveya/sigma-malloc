@@ -27,6 +27,11 @@ typedef enum {
   VERIFY_FULL,
 } VerifyMode;
 
+typedef enum {
+  OUTPUT_HUMAN,
+  OUTPUT_JSON,
+} OutputMode;
+
 typedef struct {
   const allocator_api *allocator;
   unsigned threads;
@@ -42,6 +47,7 @@ typedef struct {
   unsigned stats_interval_ms;
 
   VerifyMode verify;
+  OutputMode output;
   bool abort_on_error;
 } Options;
 
@@ -65,7 +71,7 @@ static void *sigma_allocate(size_t size, const char *file, const char *func,
 #endif
 }
 
-#define allocator_alloc(api, size)                                            \
+#define allocator_alloc(api, size)                                             \
   ((api)->allocate((size), __FILE__, __func__, __LINE__))
 
 static const allocator_api system_allocator = {
@@ -84,17 +90,44 @@ static Options options_default(void) {
   return (Options){
       .allocator = &custom_allocator,
       .threads = 1,
-      .target_bytes = 512ULL * 1024 * 1024,
+      .target_bytes = 16ULL * 1024 * 1024,
       .min_size = 1,
-      .max_size = 32ULL * 1024 * 1024,
-      .slots = 100000,
-      .cycles = 1,
+      .max_size = 64ULL * 1024,
+      .slots = 4096,
+      .cycles = 2,
       .seed = 12345,
       .fragment_percent = 50,
       .stats_interval_ms = 1000,
-      .verify = VERIFY_SAMPLE,
-      .abort_on_error = false,
+      .verify = VERIFY_FULL,
+      .output = OUTPUT_HUMAN,
+      .abort_on_error = true,
   };
 }
 
 int run_stress_test(const Options *options);
+
+typedef struct {
+  void *ptr;
+  size_t size;
+  uint64_t allocation_id;
+  uint64_t pattern_seed;
+} allocation_slot;
+
+typedef struct {
+  const Options *options;
+
+  unsigned thread_index;
+  uint64_t rng_state;
+  uint64_t next_allocation_id;
+
+  allocation_slot *slots;
+  size_t slot_count;
+
+  uint64_t live_bytes;
+  uint64_t peak_live_bytes;
+  uint64_t live_allocations;
+  uint64_t allocation_count;
+  uint64_t free_count;
+  uint64_t verification_count;
+  uint64_t allocation_failures;
+} worker_state;

@@ -230,6 +230,14 @@ void buddy_free(buddy_pool_t *pool, void *pp) {
 
   usize order = hdr->order;
 
+#if SIGMA_DEBUG
+  /* Clear allocation-only metadata before this storage becomes a free-list
+   * node. buddy_block_t reuses these first two pointer-sized fields. */
+  hdr->alloc_file = NULL;
+  hdr->alloc_func = NULL;
+  hdr->alloc_line = 0;
+#endif
+
   usize node_index = ptr_to_node_index(pool, hdr, order);
   node_mark_free(pool, node_index);
   buddy_block_t *block = (buddy_block_t *)hdr;
@@ -262,10 +270,4 @@ void buddy_free(buddy_pool_t *pool, void *pp) {
   }
 
   list_push(&pool->free_lists[order], block);
-
-#if SIGMA_DEBUG
-  hdr->alloc_file = NULL;
-  hdr->alloc_func = NULL;
-  hdr->alloc_line = 0;
-#endif
 }

@@ -73,6 +73,62 @@ zig build -Doptimize=Debug stress
 make stress ARGS="--allocator system"
 ```
 
+`zig build test` includes a small allocator-stress validation. Larger workloads
+remain on the dedicated `stress` step, so the regular test suite does not
+allocate gigabytes or run for many cycles. For example:
+
+```sh
+zig build -Doptimize=ReleaseFast stress -- \
+  --allocator custom --target 8G --max-size 32M --slots 100000 \
+  --cycles 100 --seed 12345 --verify sample --output json
+```
+
+The stress test accepts `K`, `M`, and `G` size suffixes. JSON output is
+newline-delimited, with start, phase, and summary records, so long runs can be
+streamed directly to a file:
+
+```sh
+zig build stress -- --target 2G --cycles 50 --output json > stress-results.jsonl
+```
+
+The slot table must be large enough to reach the requested target. The absolute
+upper bound is `slots * max-size`; actual workloads generally require more
+slots because allocation sizes vary. For a long-running, memory-heavy system
+baseline on a machine with enough available memory:
+
+```sh
+zig build -Doptimize=ReleaseFast stress -- \
+  --allocator system --target 32G --max-size 32M --slots 262144 \
+  --cycles 0 --verify sample --seed 12345 --output json
+```
+
+Adjust `32G` below the machine's available memory. The allocator itself and the
+stress-test slot table add overhead beyond the requested payload.
+
+Use `--threads` to run workers concurrently. Each worker has an independent
+deterministic PRNG and slot table, and `--target` applies to each worker. For
+example, this runs four concurrent 256 MiB workloads:
+
+```sh
+zig build -Doptimize=Debug stress -- \
+  --allocator custom --threads 4 --target 256M --max-size 1M \
+  --slots 8192 --cycles 20 --verify full --seed 12345 --output json
+```
+
+Thread scheduling can change the order of output records, but each worker's
+allocation sizes, slot choices, and data patterns remain deterministic.
+
+Phase records include monotonic duration, bytes changed, operation count, live
+bytes, and live allocation count. To compare the custom allocator with the
+system allocator, run the same seeded workload for both:
+
+```sh
+zig build stress -- --allocator custom --target 2G --cycles 50 \
+  --seed 12345 --output json > custom-results.jsonl
+zig build stress -- --allocator system --target 2G --cycles 50 \
+  --seed 12345 --output json > system-results.jsonl
+```
+
 Useful maintenance commands are also available through `make`:
 
 ```sh
@@ -98,4 +154,4 @@ It handles multithreading by using per-thread arenas, which keeps the common all
 - Make allocators composable like Zig.
 - Have a 42 version that only uses my own functions instead of the standard library and `malloc`.
 - Add a script to convert it into a single copy-pastable header and select which external functions are used. (make it also remove C23 specific thigns so i can compile on campus pc)
-- Get rid of Clang blocks and make a fully standard C23 version( and a non.
+- Get rid of Clang blocks and make a fully standard C23 version (and one wo c23 feats)

@@ -214,8 +214,52 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| {
         run_stress.addArgs(args);
     }
-    const stress_step = b.step("stress", "Run the allocator stress-test stub");
+    const stress_step = b.step("stress", "Run the allocator stress test");
     stress_step.dependOn(&run_stress.step);
+
+    const run_stress_validation = b.addRunArtifact(stress_exe);
+    run_stress_validation.addArgs(&.{
+        "--allocator",
+        "custom",
+        "--target",
+        "2G",
+        "--max-size",
+        "64K",
+        "--slots",
+        "4096",
+        "--cycles",
+        "2",
+        "--verify",
+        "full",
+        "--seed",
+        "12345",
+        "--output",
+        "json",
+    });
+    test_step.dependOn(&run_stress_validation.step);
+
+    const run_threaded_stress_validation = b.addRunArtifact(stress_exe);
+    run_threaded_stress_validation.addArgs(&.{
+        "--allocator",
+        "custom",
+        "--threads",
+        "4",
+        "--target",
+        "8M",
+        "--max-size",
+        "64K",
+        "--slots",
+        "2048",
+        "--cycles",
+        "3",
+        "--verify",
+        "full",
+        "--seed",
+        "12345",
+        "--output",
+        "json",
+    });
+    test_step.dependOn(&run_threaded_stress_validation.step);
 }
 
 fn findCFiles(
