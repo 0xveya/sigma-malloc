@@ -140,7 +140,7 @@ static void collect_slab_leaks(arena_t *arena) {
             bool is_large_tracking_infrastructure = false;
             large_node_t *curr_large = g_alloc.large_allocs_head;
             while (curr_large) {
-              large_header_t *lh = (large_header_t *)curr_large->mmap_ptr;
+              large_header_t *lh = (large_header_t *)curr_large->backing;
               if ((void *)curr_large == user || (void *)lh->meta == user) {
                 is_large_tracking_infrastructure = true;
                 break;
@@ -247,7 +247,7 @@ static void collect_large_leaks(void) {
   large_debug_list_lock();
   large_node_t *node = g_alloc.large_allocs_head;
   while (node) {
-    large_header_t *header = (large_header_t *)node->mmap_ptr;
+    large_header_t *header = (large_header_t *)node->backing;
     large_metadata_t *meta = header->meta;
 
     const char *file = meta->alloc_file
@@ -261,7 +261,7 @@ static void collect_large_leaks(void) {
                                .file = file,
                                .func = meta->alloc_func,
                                .line = meta->alloc_line,
-                               .size = node->mmap_size -
+                               .size = node->backing_size -
                                        offsetof(large_header_t, header) -
                                        sizeof(alloc_header_t),
                            }});

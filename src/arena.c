@@ -1,10 +1,10 @@
 #include "../include/arena.h"
 #include "../include/utils.h"
+#include "../include/sigma_malloc.h"
 
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <string.h>
-#include <sys/mman.h>
 
 static _Thread_local arena_t *g_thread_arena = NULL;
 
@@ -127,12 +127,11 @@ bool arena_expand(arena_t *arena) {
   usize metadata_size = align_up_page(sizeof(arena_extent_t));
   usize mapping_size = metadata_size + ARENA_EXTENT_SIZE;
 
-  void *mapping = mmap(NULL, mapping_size, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  void *mapping =
+      g_alloc.source->alloc(g_alloc.source->ctx, mapping_size, PAGE_SIZE);
 
-  if (mapping == MAP_FAILED) {
+  if (!mapping)
     return false;
-  }
 
   arena_extent_t *extent = mapping;
   memset(extent, 0, sizeof(*extent));
@@ -141,7 +140,7 @@ bool arena_expand(arena_t *arena) {
 
   if (buddy_pool_create(&extent->buddy, buddy_memory, ARENA_EXTENT_SIZE) ==
       NULL) {
-    munmap(mapping, mapping_size);
+    g_alloc.source->free(g_alloc.source->ctx, mapping, mapping_size);
     return false;
   }
   extent->mapping = mapping;
@@ -156,9 +155,10 @@ bool arena_expand(arena_t *arena) {
 
 arena_t *arena_create(void) {
   usize mapping_size = align_up_page(sizeof(arena_t));
-  void *mapping = mmap(NULL, mapping_size, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (mapping == MAP_FAILED) {
+  void *mapping =
+      g_alloc.source->alloc(g_alloc.source->ctx, mapping_size, PAGE_SIZE);
+
+  if (mapping == NULL) {
     return NULL;
   }
   arena_t *arena = mapping;
@@ -171,7 +171,7 @@ arena_t *arena_create(void) {
   arena->active = true;
 
   if (!arena_expand(arena)) {
-    munmap(mapping, mapping_size);
+    g_alloc.source->free(g_alloc.source->ctx, mapping, mapping_size);
     return NULL;
   }
 

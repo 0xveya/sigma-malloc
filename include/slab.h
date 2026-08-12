@@ -1,23 +1,5 @@
 #pragma once
 
-/*
- * AI-generated diagram (the author was lazy): per-thread slab allocation.
- *
- * arena cache (one size class)              one SLAB_SIZE region (16 KiB)
- * ┌───────────────┐                         ┌─────────────────────────────┐
- * │ partial slabs ├────────────────────────►│ slab_t                      │
- * │ full slabs    │                         ├──────────────┬──────────────┤
- * └───────────────┘                         │ obj header   │ user payload │
- *                                           │ { slab * }   │ free_node *  │
- *                                           ├──────────────┼──────────────┤
- *                                           │ obj header   │ user payload │
- *                                           └──────────────┴──────────────┘
- *
- * Local free:  payload -> slab free list
- * Remote free: payload -> owner arena's atomic remote stack -> local free list
- * Empty slab:  slab_t + stored extent -> owning buddy pool
- */
-
 #include "common.h"
 #include "debug.h"
 #include "qol.h"

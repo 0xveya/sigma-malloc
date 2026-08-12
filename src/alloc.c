@@ -3,9 +3,19 @@
 #include "../include/large.h"
 #include "../include/sigma_malloc.h"
 #include "../include/slab.h"
+#include "../include/memory_source.h"
 #include <stddef.h>
 
-allocator_t g_alloc = {.initialized = true, .is_debug = SIGMA_DEBUG};
+allocator_t g_alloc = {
+    .initialized = true,
+    .is_debug = SIGMA_DEBUG,
+
+#ifdef SIGMA_MALLOC_BACKEND
+    .source = &malloc_memory_source,
+#else
+    .source = &mmap_memory_source,
+#endif
+};
 
 void *balls_debug_backend(usize size, const char *file, const char *func,
                           i32 line) {

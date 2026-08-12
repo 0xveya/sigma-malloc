@@ -38,6 +38,9 @@ pub fn build(b: *std.Build) void {
 
     const lib_path = b.option([]const u8, "lib-path", "Add search path for system libraries (e.g. BlocksRuntime)");
 
+    const use_malloc_backend =
+        b.option(bool, "malloc-backend", "Use malloc/free as sigma backing source") orelse false;
+
     const exe = b.addExecutable(.{
         .name = if (optimize == .Debug) "app-dev" else "app",
         .root_module = b.createModule(.{
@@ -76,6 +79,9 @@ pub fn build(b: *std.Build) void {
     }
     if (use_debug_alloc) {
         mod.addCMacro("USE_DEBUG_ALLOC", "1");
+    }
+    if (use_malloc_backend) {
+        mod.addCMacro("SIGMA_MALLOC_BACKEND", "1");
     }
 
     mod.linkSystemLibrary("BlocksRuntime", .{});
@@ -125,6 +131,10 @@ pub fn build(b: *std.Build) void {
     }
     tests_mod.linkSystemLibrary("BlocksRuntime", .{});
     tests_mod.addCMacro("SIGMA_TESTING", "1");
+
+    if (use_malloc_backend) {
+        tests_mod.addCMacro("SIGMA_MALLOC_BACKEND", "1");
+    }
     var test_harness_files = std.ArrayList([]const u8).empty;
     defer test_harness_files.deinit(b.allocator);
 
@@ -165,6 +175,9 @@ pub fn build(b: *std.Build) void {
     }
     fuzz_mod.linkSystemLibrary("BlocksRuntime", .{});
     fuzz_mod.addCMacro("SIGMA_TESTING", "1");
+    if (use_malloc_backend) {
+        fuzz_mod.addCMacro("SIGMA_MALLOC_BACKEND", "1");
+    }
     fuzz_mod.addCSourceFiles(.{
         .files = test_harness_files.items,
         .flags = active_test_flags,
@@ -196,6 +209,9 @@ pub fn build(b: *std.Build) void {
     }
     stress_mod.linkSystemLibrary("BlocksRuntime", .{});
     stress_mod.addCMacro("SIGMA_TESTING", "1");
+    if (use_malloc_backend) {
+        stress_mod.addCMacro("SIGMA_MALLOC_BACKEND", "1");
+    }
     if (use_debug_alloc) {
         stress_mod.addCMacro("USE_DEBUG_ALLOC", "1");
     }

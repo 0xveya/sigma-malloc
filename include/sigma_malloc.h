@@ -3,10 +3,13 @@
 #include "debug.h"
 #include "large.h"
 #include "qol.h"
+#include "memory_source.h"
 
 typedef struct allocator {
   bool initialized;
   bool is_debug;
+
+  const memory_source_t *source;
 
   large_node_t *large_allocs_head;
 } allocator_t;

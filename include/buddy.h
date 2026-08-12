@@ -1,25 +1,5 @@
 #pragma once
 
-/*
- * AI-generated diagram (the author was lazy): per-arena buddy pool.
- *
- * extent backing mapping
- * ┌──────────── tree metadata ────────────┬──── usable buddy blocks ──────┐
- * │ [4 MiB] split/free/full binary tree    │ order 22: one 4 MiB block    │
- * │                                        │ order 21: two 2 MiB blocks   │
- * │                                        │ ... order 12: 4 KiB blocks   │
- * └────────────────────────────────────────┴──────────────────────────────┘
- *
- * free block:      [ buddy_block_t next/prev | unused space ]
- * allocated block: [ buddy_header_t owner arena/pool/order | user payload ]
- *                                                ^
- *                                                returned pointer
- *
- * Buddy serves 1025-byte through near-4-MiB requests.  It also supplies
- * 16-KiB regions to slabs. Each arena owns its pool; remote frees are queued
- * for the owning thread rather than mutating its pool concurrently.
- */
-
 #include "common.h"
 #include "debug.h"
 #include "qol.h"
