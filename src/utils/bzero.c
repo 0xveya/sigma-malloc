@@ -1,6 +1,7 @@
 #include <emmintrin.h>
 #include <immintrin.h>
 
+#include "../../include/libc_wrappers.h"
 #include "../../include/utils/bzero.h"
 
 typedef u16 u16_unaligned __attribute__((aligned(1), may_alias));
@@ -14,7 +15,6 @@ typedef void (*zero_fn)(void *, usize);
 static void zero_sse2(void *ptr, usize n);
 [[gnu::target("avx2")]]
 static void zero_avx2(void *ptr, usize n);
-void shit_bzero(void *ptr, usize n);
 
 /*
  * selected implementation
@@ -60,11 +60,15 @@ static inline void zero_small(u8 *p, usize n) {
  * x86-64 always gives SSE2 as baseline.
  * if AVX2 is available use the wider AVX2 implementation instead.
  */
-void zero_setup(void) {
+static void zero_setup(void) {
+#ifdef SIGMA_USE_CPU_DISPATCH
   if (__builtin_cpu_supports("avx2"))
     zero_impl = zero_avx2;
   else
     zero_impl = zero_sse2;
+#else
+  zero_impl = zero_sse2;
+#endif
 }
 
 static inline void fill_zero_simd(void *p, usize n) { zero_impl(p, n); }
@@ -242,6 +246,9 @@ static inline void zero_words(void *ptr, usize n) {
 }
 
 void fill_zero(void *p, usize n) {
+  if (zero_impl == NULL)
+    zero_setup();
+
   if (n < 16 || n >= 64 * 1024) {
     zero_words(p, n);
     return;
@@ -256,10 +263,8 @@ void fill_zero(void *p, usize n) {
 
 #if SIGMA_BZERO_BENCHMARK
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
-#include <string.h>
+#include <stdio.h>
 #include <time.h>
 
 #define BUFFER_SIZE 8192
@@ -270,7 +275,7 @@ void fill_zero(void *p, usize n) {
 #endif
 
 static int test_zero(usize offset, usize n) {
-  u8 *buf = malloc(BUFFER_SIZE);
+  u8 *buf = sigma_libc_malloc(BUFFER_SIZE);
 
   if (!buf) {
     fprintf(stderr, "malloc failed\n");
@@ -286,7 +291,7 @@ static int test_zero(usize offset, usize n) {
     if (buf[i] != GUARD_VALUE) {
       printf("FAIL: n=%zu offset=%zu overwrote BEFORE region at byte %zu\n",
              (size_t)n, (size_t)offset, (size_t)i);
-      free(buf);
+      sigma_libc_free(buf);
       return 0;
     }
   }
@@ -295,7 +300,7 @@ static int test_zero(usize offset, usize n) {
     if (buf[offset + i] != 0) {
       printf("FAIL: n=%zu offset=%zu byte %zu was not zero\n", (size_t)n,
              (size_t)offset, (size_t)i);
-      free(buf);
+      sigma_libc_free(buf);
       return 0;
     }
   }
@@ -304,26 +309,13 @@ static int test_zero(usize offset, usize n) {
     if (buf[i] != GUARD_VALUE) {
       printf("FAIL: n=%zu offset=%zu overwrote AFTER region at byte %zu\n",
              (size_t)n, (size_t)offset, (size_t)i);
-      free(buf);
+      sigma_libc_free(buf);
       return 0;
     }
   }
 
-  free(buf);
+  sigma_libc_free(buf);
   return 1;
-}
-
-// [[gnu::noinline]]
-// static void shit_bzero(void *ptr, usize n) {
-//   volatile u8 *p = ptr;
-//
-//   while (n--)
-//     *p++ = 0;
-// }
-
-[[gnu::noinline]]
-void shit_bzero(void *ptr, usize n) {
-  zero_words(ptr, n);
 }
 
 static uint64_t now_ns(void) {
@@ -338,7 +330,7 @@ static inline void observe_buffer(void *p) {
 }
 
 static void bench(usize size) {
-  u8 *buf = malloc(size);
+  u8 *buf = sigma_libc_malloc(size);
 
   if (!buf) {
     fprintf(stderr, "malloc failed\n");
@@ -350,7 +342,7 @@ static void bench(usize size) {
   if (iterations == 0)
     iterations = 1;
 
-  memset(buf, GUARD_VALUE, size);
+  sigma_libc_memset(buf, GUARD_VALUE, size);
 
   uint64_t start = now_ns();
 
@@ -361,29 +353,29 @@ static void bench(usize size) {
 
   uint64_t simd_ns = now_ns() - start;
 
-  memset(buf, GUARD_VALUE, size);
+  sigma_libc_memset(buf, GUARD_VALUE, size);
 
   start = now_ns();
 
   for (usize i = 0; i < iterations; i++) {
-    memset(buf, 0, size);
+    sigma_libc_memset(buf, 0, size);
     observe_buffer(buf);
   }
 
   uint64_t libc_ns = now_ns() - start;
 
-  memset(buf, GUARD_VALUE, size);
+  sigma_libc_memset(buf, GUARD_VALUE, size);
 
   start = now_ns();
 
   for (usize i = 0; i < iterations; i++) {
-    shit_bzero(buf, size);
+    zero_words(buf, size);
     observe_buffer(buf);
   }
 
   uint64_t shit_ns = now_ns() - start;
 
-  memset(buf, GUARD_VALUE, size);
+  sigma_libc_memset(buf, GUARD_VALUE, size);
 
   start = now_ns();
 
@@ -405,7 +397,7 @@ static void bench(usize size) {
          " | unga %8.2f GB/s | fill_zero %8.2f GB/s\n",
          (size_t)size, simd_gbs, libc_gbs, shit_gbs, fill_zero_gbs);
 
-  free(buf);
+  sigma_libc_free(buf);
 }
 
 int main(void) {

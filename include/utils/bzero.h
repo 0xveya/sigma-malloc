@@ -2,5 +2,5 @@
 
 #include "../qol.h"
 
-void zero_setup(void);
+/* Zero exactly n bytes using the selected local implementation. */
 void fill_zero(void *ptr, usize n);
