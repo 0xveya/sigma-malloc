@@ -96,6 +96,35 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_cmd.step);
 
+    const parser_example = b.addExecutable(.{
+        .name = "parser-example",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    parser_example.use_llvm = true;
+    const parser_mod = parser_example.root_module;
+    parser_mod.link_libc = true;
+    parser_mod.addIncludePath(b.path("include"));
+    if (lib_path) |lp| parser_mod.addLibraryPath(.{ .cwd_relative = lp });
+    parser_mod.linkSystemLibrary("BlocksRuntime", .{});
+    parser_mod.addCSourceFile(.{
+        .file = b.path("examples/parser.c"),
+        .flags = active_flags,
+    });
+    var parser_src_files = std.ArrayList([]const u8).empty;
+    defer parser_src_files.deinit(b.allocator);
+    findCFiles(b.graph.io, b.allocator, "src", &parser_src_files, &[_][]const u8{}, true) catch @panic("failed to find C files for parser example");
+    parser_mod.addCSourceFiles(.{
+        .files = parser_src_files.items,
+        .flags = active_flags,
+    });
+
+    const run_parser_example = b.addRunArtifact(parser_example);
+    const parser_example_step = b.step("parser-example", "Run parser allocator example");
+    parser_example_step.dependOn(&run_parser_example.step);
+
     const translate_c = b.addTranslateC(.{
         .root_source_file = b.path("tests_c.h"),
         .target = target,
