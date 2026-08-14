@@ -1,157 +1,169 @@
 # sigma_malloc
 
-My fun side quest to learn more about memory allocation and C.
+A small allocator project for learning how allocation works and building a
+reusable allocator for post common-core 42 projects.
 
-## About
+Sigma provides mmap- and malloc-backed allocator instances behind a generic
+`allocator_t` interface. Allocators are composable: an arena can use any
+generic allocator as its parent, then be passed into code without exposing its
+allocation strategy.
 
-Besides learning more about this topic, the goal is to have my own `malloc` implementation for post common-core projects in 42.
+## Features
 
-I want to create composable allocators on top of the generic core to have a Zig-like allocator experience, together with a debug mode to detect leaks. For example, I want to be able to create an arena allocator from the generic one, like in Zig, and pass the allocator into functions to handle lifetimes better.
+- Instance-aware mmap and malloc memory sources.
+- Slab, buddy, and direct backing-source allocation paths.
+- Power-of-two alignment and typed allocation helpers.
+- Realloc and zeroed allocation without direct allocator-runtime libc calls.
+- A composable Zig-style arena allocator.
+- Leak source locations, wrong-owner errors, and double-free diagnostics in
+  debug builds.
 
-I will also implement pluggable backends depending on the allowed functions. For example, one backend could use `malloc` instead of `mmap`.
+## Using the allocator
 
-## Current progress
+Typed helpers derive alignment from `_Alignof(T)`, so normal callers do not
+need to pass alignment explicitly:
 
-- Basic memory allocation and freeing.
-- Debug information for unfreed memory.
+```c
+#include "arena_allocator.h"
+#include "memory_source.h"
+#include "sigma_malloc.h"
 
-## Requirements
+sigma_allocator_t sigma;
+sigma_allocator_init(&sigma, &mmap_memory_source);
 
-The project uses the Zig build system to build, test, and fuzz the code. The C sources currently target C23 and use Clang blocks (`-fblocks`). The expected Zig version is pinned in `mise.toml`:
+allocator_t allocator = sigma_allocator(&sigma);
+int *values = allocator_array_zeroed(allocator, int, 32);
 
-- Zig 0.16.0.
-- A C23 compiler/toolchain supported by Zig.
-- `BlocksRuntime`.
+if (values != NULL) {
+  values[0] = 42;
+  allocator_free_array(allocator, values, 32);
+}
 
-`mise` can optionally install and manage the expected toolchain versions. If you already have Zig 0.16.0 and the required system libraries installed, you can use the `zig` and `make` commands directly.
-
-## Building and running
-
-Clone the repository and enter the project directory, then run a debug build:
-
-```sh
-mise install       # Optional: install the versions from mise.toml
-zig build -Doptimize=Debug
-./zig-out/bin/app-dev
+sigma_debug_report_leaks(&sigma);
 ```
 
-To build and run the release version:
+Raw byte-oriented code can use `allocator_alloc_aligned`. Sigma records size,
+alignment, ownership, and debug source information in its metadata. The
+generic interface keeps size and alignment explicit so implementations that do
+not store headers remain possible.
+
+An arena composes over any generic allocator and releases all of its backing
+blocks together:
+
+```c
+allocator_arena_t arena;
+allocator_arena_init(&arena, allocator, 16 * 1024);
+
+allocator_t temporary = allocator_arena(&arena);
+int *scratch = allocator_array(temporary, int, 128);
+
+if (scratch != NULL)
+  scratch[0] = 42;
+
+allocator_arena_deinit(&arena);
+```
+
+Individual arena frees are no-ops. Arena realloc preserves the old prefix, and
+`allocator_arena_reset` or `allocator_arena_deinit` returns every backing block
+to the parent.
+
+The [`examples`](examples) directory contains a standalone parser whose state
+stores an `allocator_t`. It parses a small configuration string, grows its
+result array through the public API, and works with the arena supplied by its
+caller:
+
+```sh
+zig build parser-example
+```
+
+To intentionally leak the parser arena and inspect its allocation source:
+
+```sh
+zig build parser-example -Dparser-example-free=false
+```
+
+The debug report points to the user allocation through the composed arena:
+
+```text
+Memory Leak Detected:
+  Location: parser.c:21 inside copy_slice()
+     => char *copy = allocator_array(parser->allocator, char, length + 1);
+```
+
+## Build and test
+
+The project uses C23 and Zig 0.16.0, pinned in [`mise.toml`](mise.toml). `mise`
+is optional if the expected Zig toolchain is already installed.
+
+```sh
+mise install
+zig build -Doptimize=Debug
+./zig-out/bin/app-dev
+zig build test
+```
+
+`zig build test` runs the regression and fuzz-corpus cases plus quiet
+single-threaded, threaded, and arena stress validations. Successful cases are
+shown as ANSI-colored checkmarks; stress output remains hidden unless a check
+fails.
+
+Other useful commands:
 
 ```sh
 zig build -Doptimize=ReleaseFast
 ./zig-out/bin/app
-```
-
-The same common workflows are available through the `Makefile`:
-
-```sh
-make dev-run       # Build and run the debug version (the default)
-make run           # Build and run the release version
-make build         # Build the release version
-make dev           # Build the debug version
-```
-
-## Testing
-
-Run the regression tests and allocator fuzz tests with:
-
-```sh
-zig build test
-```
-
-The fuzz tests can also be run through the dedicated build step. Zig’s fuzzing options can be passed after `--` when needed:
-
-```sh
 zig build alloc-fuzz
-zig build alloc-fuzz -- --fuzz
+make check
+make format
 ```
 
-The stress-test executable can be run with:
+## Stress testing
 
-```sh
-zig build -Doptimize=Debug stress
-make stress ARGS="--allocator system"
-```
-
-`zig build test` includes a small allocator-stress validation. Larger workloads
-remain on the dedicated `stress` step, so the regular test suite does not
-allocate gigabytes or run for many cycles. For example:
+The stress runner supports `custom`, `custom-arena`, and `system` allocators,
+deterministic seeds, multiple workers, full or sampled verification, and human,
+JSON, or quiet output. `--target` applies to each worker and is bounded by the
+configured slot count and maximum allocation size.
 
 ```sh
 zig build -Doptimize=ReleaseFast stress -- \
-  --allocator custom --target 8G --max-size 32M --slots 100000 \
-  --cycles 100 --seed 12345 --verify sample --output json
-```
-
-The stress test accepts `K`, `M`, and `G` size suffixes. JSON output is
-newline-delimited, with start, phase, and summary records, so long runs can be
-streamed directly to a file:
-
-```sh
-zig build stress -- --target 2G --cycles 50 --output json > stress-results.jsonl
-```
-
-The slot table must be large enough to reach the requested target. The absolute
-upper bound is `slots * max-size`; actual workloads generally require more
-slots because allocation sizes vary. For a long-running, memory-heavy system
-baseline on a machine with enough available memory:
-
-```sh
-zig build -Doptimize=ReleaseFast stress -- \
-  --allocator system --target 32G --max-size 32M --slots 262144 \
-  --cycles 0 --verify sample --seed 12345 --output json
-```
-
-Adjust `32G` below the machine's available memory. The allocator itself and the
-stress-test slot table add overhead beyond the requested payload.
-
-Use `--threads` to run workers concurrently. Each worker has an independent
-deterministic PRNG and slot table, and `--target` applies to each worker. For
-example, this runs four concurrent 256 MiB workloads:
-
-```sh
-zig build -Doptimize=Debug stress -- \
   --allocator custom --threads 4 --target 256M --max-size 1M \
-  --slots 8192 --cycles 20 --verify full --seed 12345 --output json
+  --slots 8192 --cycles 20 --verify full --seed 12345
 ```
 
-Thread scheduling can change the order of output records, but each worker's
-allocation sizes, slot choices, and data patterns remain deterministic.
-
-Phase records include monotonic duration, bytes changed, operation count, live
-bytes, and live allocation count. To compare the custom allocator with the
-system allocator, run the same seeded workload for both:
+Use the same seed and workload to compare backends:
 
 ```sh
-zig build stress -- --allocator custom --target 2G --cycles 50 \
+zig build stress -- --allocator custom --target 256M \
   --seed 12345 --output json > custom-results.jsonl
-zig build stress -- --allocator system --target 2G --cycles 50 \
+zig build stress -- --allocator system --target 256M \
   --seed 12345 --output json > system-results.jsonl
 ```
 
-Useful maintenance commands are also available through `make`:
+The slot table and allocator metadata add memory overhead beyond the live
+payload. Choose targets that fit the machine running the test.
 
-```sh
-make check         # Run cppcheck
-make format        # Format C and header files with clang-format
-make compiledb     # Generate compile_commands.json
-make clean         # Remove generated build artifacts
-```
+## Design
 
-## Technical details
+Allocation routing depends on size and alignment:
 
-The allocator currently uses different strategies depending on the requested allocation size:
+- Requests up to and including 1 KiB with supported alignment try the slab
+  allocator.
+- Larger requests that fit a buddy pool try the buddy allocator.
+- Other requests use the allocator instance's selected memory source directly.
 
-- Allocations below 1 KiB use a slab allocator.
-- Allocations from 1 KiB up to 4 MiB use a buddy allocator.
-- Allocations larger than 4 MiB use raw `mmap`.
+Internal arenas are per-thread and per-sigma-instance. They are separate from
+the public arena allocator, whose lifetime is controlled by its caller.
 
-It handles multithreading by using per-thread arenas, which keeps the common allocation path free of locks.
+Allocator runtime code reaches the host through
+[`libc_wrappers.c`](src/libc_wrappers.c) and its matching header. That boundary
+contains malloc/free, mmap/munmap, memset, and the optional libc memcpy call.
+By default copying uses the local implementation; defining
+`SIGMA_USE_LIBC_MEMCPY` selects libc memcpy. This keeps later 42-specific
+routing changes in one place.
 
 ## TODO
 
-- Make the backend generic and swappable.
-- Make allocators composable like Zig.
-- Have a 42 version that only uses my own functions instead of the standard library and `malloc`.
-- Add a script to convert it into a single copy-pastable header and select which external functions are used. (make it also remove C23 specific thigns so i can compile on campus pc)
-- Get rid of Clang blocks and make a fully standard C23 version (and one wo c23 feats)
+- Provide a 42-compatible host-wrapper implementation and allowed-functions
+  profile.
+- Generate a single-header distribution that can also target pre-C23 campus
+  toolchains.
