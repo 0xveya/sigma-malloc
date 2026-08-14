@@ -6,8 +6,6 @@
 #include "../include/utils.h"
 #include <stdint.h>
 
-void cock(void *ptr) { sigma_free(&g_alloc, ptr); }
-
 void sigma_free(sigma_allocator_t *sigma, void *pp) {
   if (!pp)
     return;

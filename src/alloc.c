@@ -1,20 +1,9 @@
 #include "../include/arena.h"
 #include "../include/debug.h"
 #include "../include/large.h"
-#include "../include/memory_source.h"
 #include "../include/sigma_malloc.h"
 #include "../include/slab.h"
 #include <stddef.h>
-
-sigma_allocator_t g_alloc = {
-    .initialized = true,
-    .is_debug = SIGMA_DEBUG,
-#ifdef SIGMA_MALLOC_BACKEND
-    .source = &malloc_memory_source,
-#else
-    .source = &mmap_memory_source,
-#endif
-};
 
 static void *finish_alloc(void *ptr) {
   if (ptr != NULL)
@@ -51,16 +40,6 @@ void *sigma_alloc_debug(sigma_allocator_t *sigma, usize size, usize alignment,
 #endif
 
   return ptr;
-}
-
-void *balls_backend(usize size) {
-  return sigma_alloc(&g_alloc, size, _Alignof(max_align_t));
-}
-
-void *balls_debug_backend(usize size, const char *file, const char *func,
-                          i32 line) {
-  return sigma_alloc_debug(&g_alloc, size, _Alignof(max_align_t), file, func,
-                           line);
 }
 
 void *sigma_alloc(sigma_allocator_t *sigma, usize size, usize alignment) {

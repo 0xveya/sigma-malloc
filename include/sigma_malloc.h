@@ -16,18 +16,6 @@ typedef struct sigma_allocator {
   large_node_t *large_allocs_head;
 } sigma_allocator_t;
 
-extern sigma_allocator_t g_alloc;
-void *balls_backend(usize size);
-void *balls_debug_backend(usize size, const char *file, const char *func,
-                          i32 line);
-void cock(void *ptr);
-
-#if SIGMA_DEBUG
-#define balls(size) balls_debug_backend((size), __FILE__, __func__, __LINE__)
-#else
-#define balls(size) balls_backend(size)
-#endif
-
 /* Return a generic handle borrowing sigma. */
 allocator_t sigma_allocator(sigma_allocator_t *sigma);
 
