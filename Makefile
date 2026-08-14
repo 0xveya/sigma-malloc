@@ -2,8 +2,9 @@
 
 MAKEFLAGS += -j
 
-C_SOURCES := main.c $(wildcard src/*.c)
-STRESS_SOURCES := tests/stress/main.c $(wildcard src/*.c)
+SRC_FILES := $(shell find src -type f -name '*.c')
+C_SOURCES := main.c $(SRC_FILES)
+STRESS_SOURCES := tests/stress/main.c $(SRC_FILES)
 COMPILEDB_SOURCES := $(C_SOURCES) $(STRESS_SOURCES)
 COMPILEDB_TARGETS := $(sort $(COMPILEDB_SOURCES:%=compiledb-%))
 COMPILEDB_FLAGS := -std=c23 -fblocks -Wall -Wextra -Wpedantic -Wno-auto-decl-extensions -Wshadow -Wconversion -Wdouble-promotion -Wformat=2 -Wundef -I include -DHORNY_MODE=1 -DNO_LEAK_REWARD=1 -DUSE_DEBUG_ALLOC=1
@@ -43,10 +44,10 @@ $(COMPILEDB_TARGETS):
 	clang $(COMPILEDB_FLAGS) -I tests/stress -fsyntax-only $(patsubst compiledb-%,%,$@)
 
 check:
-	cppcheck --enable=all --suppress=missingIncludeSystem main.c src/*.c
+	cppcheck --enable=all --suppress=missingIncludeSystem main.c $(SRC_FILES)
 
 format:
-	clang-format -i main.c src/*.c include/*.h
+	clang-format -i main.c $(SRC_FILES) include/*.h include/utils/*.h
 
 clean:
 	rm -rf zig-out .zig-cache compile_commands.json .bear-fingerprints app app-dev
