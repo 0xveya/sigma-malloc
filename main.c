@@ -1,59 +1,76 @@
+#include "./include/arena_allocator.h"
 #include "./include/memory_source.h"
 #include "./include/sigma_malloc.h"
 
+#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
-#define var auto
+typedef struct cache_line {
+  _Alignas(64) unsigned char bytes[64];
+} cache_line_t;
 
-static void test_allocator(const char *name, const memory_source_t *source) {
-  printf("\n=== testing %s backend ===\n", name);
+static bool test_allocator(const char *name, allocator_t allocator) {
+  int *values = allocator_array(allocator, int, 10);
+  cache_line_t *line = allocator_new(allocator, cache_line_t);
+  unsigned char *zeroed = allocator_array_zeroed(allocator, unsigned char, 128);
 
-  g_alloc.source = source;
-
-  var lol = (int *)balls(sizeof(int) * 10);
-  if (!lol) {
-    fprintf(stderr, "%s: failed small allocation\n", name);
-    exit(67);
+  if (values == NULL || line == NULL || zeroed == NULL) {
+    fprintf(stderr, "%s: allocation failed\n", name);
+    allocator_free_array(allocator, zeroed, 128);
+    allocator_delete(allocator, line);
+    allocator_free_array(allocator, values, 10);
+    return false;
   }
 
-  for (int i = 0; i < 10; i++) {
-    lol[i] = i * 67;
-    printf("%d\n", lol[i]);
+  if ((uintptr_t)line % _Alignof(cache_line_t) != 0) {
+    fprintf(stderr, "%s: typed allocation is not aligned\n", name);
+    allocator_free_array(allocator, zeroed, 128);
+    allocator_delete(allocator, line);
+    allocator_free_array(allocator, values, 10);
+    return false;
   }
 
-  var test = (char *)balls(1024 * 1024);
-  if (!test) {
-    fprintf(stderr, "%s: failed 1 MiB allocation\n", name);
-    cock(lol);
-    exit(67);
+  for (usize i = 0; i < 10; i++)
+    values[i] = (int)(i * 67);
+  for (usize i = 0; i < 128; i++) {
+    if (zeroed[i] != 0) {
+      fprintf(stderr, "%s: calloc allocation was not zeroed\n", name);
+      allocator_free_array(allocator, zeroed, 128);
+      allocator_delete(allocator, line);
+      allocator_free_array(allocator, values, 10);
+      return false;
+    }
   }
 
-  memset(test, 'f', 1024 * 1024);
-  printf("test: %.10s\n", test);
-
-  var test1 = (char *)balls(1024 * 10024);
-  if (!test1) {
-    fprintf(stderr, "%s: failed large allocation\n", name);
-    cock(test);
-    cock(lol);
-    exit(67);
-  }
-
-  memset(test1, 'g', 1024 * 10024);
-  printf("test1: %.10s\n", test1);
-
-  cock(test1);
-  cock(test);
-  cock(lol);
-
-  printf("=== %s backend passed ===\n", name);
+  allocator_free_array(allocator, zeroed, 128);
+  allocator_delete(allocator, line);
+  allocator_free_array(allocator, values, 10);
+  printf("%s backend: typed, aligned, and zeroed allocations passed\n", name);
+  return true;
 }
 
 int main(void) {
-  test_allocator("mmap", &mmap_memory_source);
-  test_allocator("malloc", &malloc_memory_source);
+  sigma_allocator_t mmap_sigma;
+  sigma_allocator_t malloc_sigma;
 
+  sigma_allocator_init(&mmap_sigma, &mmap_memory_source);
+  sigma_allocator_init(&malloc_sigma, &malloc_memory_source);
+
+  allocator_t mmap_allocator = sigma_allocator(&mmap_sigma);
+  allocator_t malloc_allocator = sigma_allocator(&malloc_sigma);
+  allocator_arena_t mmap_arena;
+  allocator_arena_t malloc_arena;
+
+  allocator_arena_init(&mmap_arena, mmap_allocator, 16 * 1024);
+  allocator_arena_init(&malloc_arena, malloc_allocator, 16 * 1024);
+
+  bool passed = test_allocator("mmap arena", allocator_arena(&mmap_arena)) &&
+                test_allocator("malloc arena", allocator_arena(&malloc_arena));
+
+  allocator_arena_deinit(&malloc_arena);
+  allocator_arena_deinit(&mmap_arena);
+
+  if (!passed)
+    return 67;
   return 0;
 }
