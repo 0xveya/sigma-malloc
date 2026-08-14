@@ -7,7 +7,7 @@ C_SOURCES := main.c $(SRC_FILES)
 STRESS_SOURCES := tests/stress/main.c $(SRC_FILES)
 COMPILEDB_SOURCES := $(C_SOURCES) $(STRESS_SOURCES)
 COMPILEDB_TARGETS := $(sort $(COMPILEDB_SOURCES:%=compiledb-%))
-COMPILEDB_FLAGS := -std=c23 -fblocks -Wall -Wextra -Wpedantic -Wno-auto-decl-extensions -Wshadow -Wconversion -Wdouble-promotion -Wformat=2 -Wundef -I include -DHORNY_MODE=1 -DNO_LEAK_REWARD=1 -DUSE_DEBUG_ALLOC=1
+COMPILEDB_FLAGS := -std=c23 -Wall -Wextra -Wpedantic -Wno-auto-decl-extensions -Wshadow -Wconversion -Wdouble-promotion -Wformat=2 -Wundef -I include -DHORNY_MODE=1 -DNO_LEAK_REWARD=1 -DUSE_DEBUG_ALLOC=1
 
 .PHONY: $(COMPILEDB_TARGETS)
 

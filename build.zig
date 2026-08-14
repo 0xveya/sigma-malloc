@@ -2,7 +2,6 @@ const std = @import("std");
 
 const base_c_flags = [_][]const u8{
     "-std=c23",
-    "-fblocks",
     "-Wall",
     "-Wextra",
     "-Wpedantic",
@@ -36,10 +35,10 @@ pub fn build(b: *std.Build) void {
     const no_leak_reward = b.option(bool, "no-leak-reward", "Enable NO_LEAK_REWARD") orelse (optimize == .Debug);
     const use_debug_alloc = b.option(bool, "use-debug-alloc", "Enable USE_DEBUG_ALLOC") orelse (optimize == .Debug);
 
-    const lib_path = b.option([]const u8, "lib-path", "Add search path for system libraries (e.g. BlocksRuntime)");
-
     const use_malloc_backend =
         b.option(bool, "malloc-backend", "Use malloc/free as sigma backing source") orelse false;
+    const parser_example_free =
+        b.option(bool, "parser-example-free", "Release the parser example arena") orelse true;
 
     const exe = b.addExecutable(.{
         .name = if (optimize == .Debug) "app-dev" else "app",
@@ -52,10 +51,6 @@ pub fn build(b: *std.Build) void {
 
     const mod = exe.root_module;
     mod.link_libc = true;
-    if (lib_path) |lp| {
-        mod.addLibraryPath(std.Build.LazyPath{ .cwd_relative = lp });
-    }
-
     mod.addIncludePath(b.path("include"));
 
     var src_files = std.ArrayList([]const u8).empty;
@@ -84,8 +79,6 @@ pub fn build(b: *std.Build) void {
         mod.addCMacro("SIGMA_MALLOC_BACKEND", "1");
     }
 
-    mod.linkSystemLibrary("BlocksRuntime", .{});
-
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -107,12 +100,16 @@ pub fn build(b: *std.Build) void {
     const parser_mod = parser_example.root_module;
     parser_mod.link_libc = true;
     parser_mod.addIncludePath(b.path("include"));
-    if (lib_path) |lp| parser_mod.addLibraryPath(.{ .cwd_relative = lp });
-    parser_mod.linkSystemLibrary("BlocksRuntime", .{});
+    parser_mod.addIncludePath(b.path("examples"));
+    parser_mod.addCSourceFile(.{
+        .file = b.path("examples/main.c"),
+        .flags = active_flags,
+    });
     parser_mod.addCSourceFile(.{
         .file = b.path("examples/parser.c"),
         .flags = active_flags,
     });
+    if (!parser_example_free) parser_mod.addCMacro("PARSER_EXAMPLE_FREE", "0");
     var parser_src_files = std.ArrayList([]const u8).empty;
     defer parser_src_files.deinit(b.allocator);
     findCFiles(b.graph.io, b.allocator, "src", &parser_src_files, &[_][]const u8{}, true) catch @panic("failed to find C files for parser example");
@@ -155,10 +152,6 @@ pub fn build(b: *std.Build) void {
     const tests_mod = main_tests.root_module;
     tests_mod.link_libc = true;
     tests_mod.addIncludePath(b.path("include"));
-    if (lib_path) |lp| {
-        tests_mod.addLibraryPath(std.Build.LazyPath{ .cwd_relative = lp });
-    }
-    tests_mod.linkSystemLibrary("BlocksRuntime", .{});
     tests_mod.addCMacro("SIGMA_TESTING", "1");
 
     if (use_malloc_backend) {
@@ -169,6 +162,7 @@ pub fn build(b: *std.Build) void {
 
     findCFiles(b.graph.io, b.allocator, ".", &test_harness_files, &[_][]const u8{ "test.c", "main.c" }, false) catch @panic("failed to find C files for testing");
     findCFiles(b.graph.io, b.allocator, "src", &test_harness_files, &[_][]const u8{}, true) catch @panic("failed to find C files in src for testing");
+    test_harness_files.append(b.allocator, "tests/test_support.c") catch @panic("failed to add test support source");
 
     const active_test_flags = if (optimize == .Debug) &test_dev_flags else &test_release_flags;
     tests_mod.addCSourceFiles(.{
@@ -199,10 +193,6 @@ pub fn build(b: *std.Build) void {
     const fuzz_mod = fuzz_tests.root_module;
     fuzz_mod.link_libc = true;
     fuzz_mod.addIncludePath(b.path("include"));
-    if (lib_path) |lp| {
-        fuzz_mod.addLibraryPath(std.Build.LazyPath{ .cwd_relative = lp });
-    }
-    fuzz_mod.linkSystemLibrary("BlocksRuntime", .{});
     fuzz_mod.addCMacro("SIGMA_TESTING", "1");
     if (use_malloc_backend) {
         fuzz_mod.addCMacro("SIGMA_MALLOC_BACKEND", "1");
@@ -233,10 +223,6 @@ pub fn build(b: *std.Build) void {
     stress_mod.link_libc = true;
     stress_mod.addIncludePath(b.path("include"));
     stress_mod.addIncludePath(b.path("tests/stress"));
-    if (lib_path) |lp| {
-        stress_mod.addLibraryPath(std.Build.LazyPath{ .cwd_relative = lp });
-    }
-    stress_mod.linkSystemLibrary("BlocksRuntime", .{});
     stress_mod.addCMacro("SIGMA_TESTING", "1");
     if (use_malloc_backend) {
         stress_mod.addCMacro("SIGMA_MALLOC_BACKEND", "1");
