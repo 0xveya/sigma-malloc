@@ -73,7 +73,7 @@ static void usage(FILE *stream, const char *program) {
       "Size values accept bytes or a K, M, or G suffix (powers of 1024).\n"
       "\n"
       "Options:\n"
-      "  --allocator system|custom\n"
+      "  --allocator system|custom|custom-arena\n"
       "      Allocator under test. 'system' uses malloc/free; 'custom' uses\n"
       "      sigma_malloc. Default: custom. Example: --allocator system\n"
       "\n"
@@ -114,7 +114,7 @@ static void usage(FILE *stream, const char *program) {
       "      and full checks every byte. Default: full.\n"
       "      Example: --verify sample\n"
       "\n"
-      "  --output human|json\n"
+      "  --output human|json|quiet\n"
       "      Human-readable text or newline-delimited JSON events. JSON "
       "records\n"
       "      include thread, phase, timing, memory, and result data.\n"
@@ -204,6 +204,8 @@ static bool parse_options(int argc, char **argv, Options *options) {
         options->allocator = &system_allocator;
       } else if (strcmp(optarg, "custom") == 0) {
         options->allocator = &custom_allocator;
+      } else if (strcmp(optarg, "custom-arena") == 0) {
+        options->allocator = &custom_arena_allocator;
       } else {
         fprintf(stderr, "Unknown allocator: %s\n", optarg);
         return false;
@@ -278,6 +280,8 @@ static bool parse_options(int argc, char **argv, Options *options) {
         options->output = OUTPUT_HUMAN;
       else if (strcmp(optarg, "json") == 0)
         options->output = OUTPUT_JSON;
+      else if (strcmp(optarg, "quiet") == 0)
+        options->output = OUTPUT_QUIET;
       else {
         fprintf(stderr, "Invalid output format: %s\n", optarg);
         return false;
@@ -507,6 +511,25 @@ static bool allocate_slot(worker_state *worker, allocation_slot *slot) {
   slot->allocation_id = worker->next_allocation_id++;
   slot->pattern_seed = rng_next(&worker->rng_state);
 
+  if ((slot->allocation_id & 7U) == 0 && size > 1) {
+    size_t old_size = size / 2;
+    void *smaller = worker->options->allocator->reallocate(ptr, size, old_size);
+    if (smaller == NULL) {
+      worker->options->allocator->deallocate(ptr, size);
+      ++worker->allocation_failures;
+      *slot = (allocation_slot){0};
+      return false;
+    }
+    ptr = worker->options->allocator->reallocate(smaller, old_size, size);
+    if (ptr == NULL) {
+      worker->options->allocator->deallocate(smaller, old_size);
+      ++worker->allocation_failures;
+      *slot = (allocation_slot){0};
+      return false;
+    }
+    slot->ptr = ptr;
+  }
+
   fill_allocation(slot);
 
   worker->live_bytes += size;
@@ -529,7 +552,7 @@ static bool free_slot(worker_state *worker, allocation_slot *slot) {
     return false;
   }
 
-  worker->options->allocator->deallocate(slot->ptr);
+  worker->options->allocator->deallocate(slot->ptr, slot->size);
   worker->live_bytes -= slot->size;
   --worker->live_allocations;
   ++worker->free_count;
@@ -680,7 +703,7 @@ static void emit_phase_end(const worker_state *worker, uint64_t cycle,
            (unsigned long long)worker->live_bytes,
            (unsigned long long)worker->live_allocations);
     fflush(stdout);
-  } else {
+  } else if (worker->options->output == OUTPUT_HUMAN) {
     printf("  thread=%u duration=%llu ns bytes-changed=%llu operations=%llu "
            "live=%llu allocations=%llu\n",
            worker->thread_index, (unsigned long long)duration_ns,
@@ -732,6 +755,9 @@ static bool run_worker(const Options *options, unsigned thread_index) {
     return false;
   }
 
+  if (options->allocator->prepare != NULL)
+    options->allocator->prepare();
+
   uint64_t worker_started_ns = monotonic_time_ns();
 
   if (options->output == OUTPUT_JSON) {
@@ -748,7 +774,7 @@ static bool run_worker(const Options *options, unsigned thread_index) {
         (unsigned long long)options->slots, (unsigned long long)options->cycles,
         options->fragment_percent, verify_mode_name(options->verify));
     fflush(stdout);
-  } else {
+  } else if (options->output == OUTPUT_HUMAN) {
     printf("allocator=%s thread=%u seed=%llu worker-seed=%llu\n",
            options->allocator->name, thread_index,
            (unsigned long long)options->seed,
@@ -797,7 +823,7 @@ static bool run_worker(const Options *options, unsigned thread_index) {
            (unsigned long long)total_duration_ns,
            (unsigned long long)options->seed);
     fflush(stdout);
-  } else {
+  } else if (options->output == OUTPUT_HUMAN) {
     printf("thread=%u allocations=%llu frees=%llu failures=%llu "
            "verifications=%llu live=%llu peak-live=%llu duration=%llu ns\n",
            thread_index, (unsigned long long)worker.allocation_count,
@@ -809,6 +835,8 @@ static bool run_worker(const Options *options, unsigned thread_index) {
            (unsigned long long)total_duration_ns);
   }
 
+  if (options->allocator->cleanup != NULL)
+    options->allocator->cleanup();
   free(worker.slots);
   return success;
 }
@@ -908,7 +936,7 @@ int run_stress_test(const Options *options) {
            success ? "true" : "false", started,
            (unsigned long long)options->seed);
     fflush(stdout);
-  } else {
+  } else if (options->output == OUTPUT_HUMAN) {
     printf("threads=%u success=%s seed=%llu\n", started,
            success ? "true" : "false", (unsigned long long)options->seed);
   }
@@ -918,6 +946,7 @@ int run_stress_test(const Options *options) {
 
 int main(int argc, char **argv) {
   Options options = options_default();
+  stress_allocator_init();
 
   if (!parse_options(argc, argv, &options)) {
     usage(stderr, argv[0]);
@@ -929,5 +958,14 @@ int main(int argc, char **argv) {
     printf("Seed: %llu\n", (unsigned long long)options.seed);
   }
 
-  return run_stress_test(&options);
+  int result = run_stress_test(&options);
+  if (options.output == OUTPUT_QUIET && result == EXIT_SUCCESS) {
+    if (options.threads > 1) {
+      printf("\x1b[1;32m✓\x1b[0m stress: %s (%u threads)\n",
+             options.allocator->name, options.threads);
+    } else {
+      printf("\x1b[1;32m✓\x1b[0m stress: %s\n", options.allocator->name);
+    }
+  }
+  return result;
 }

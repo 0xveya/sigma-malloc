@@ -8,6 +8,11 @@ const assert = std.debug.assert;
 const panic = std.debug.panic;
 const fuzz_abi = std.Build.abi.fuzz;
 
+const ansi_green = "\x1b[1;32m";
+const ansi_red = "\x1b[1;31m";
+const ansi_yellow = "\x1b[1;33m";
+const ansi_reset = "\x1b[0m";
+
 pub const std_options: std.Options = .{
     .logFn = log,
 };
@@ -284,25 +289,29 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
         if (test_fn.func()) |_| {
             ok_count += 1;
             test_node.end();
-            if (!have_tty) std.debug.print("OK\n", .{});
+            if (have_tty) {
+                std.debug.print(ansi_green ++ "✓" ++ ansi_reset ++ " {d}/{d} {s}\n", .{ i + 1, test_fn_list.len, test_fn.name });
+            } else {
+                std.debug.print(ansi_green ++ " ✓" ++ ansi_reset ++ "\n", .{});
+            }
         } else |err| switch (err) {
             error.SkipZigTest => {
                 skip_count += 1;
                 if (have_tty) {
-                    std.debug.print("{d}/{d} {s}...SKIP\n", .{ i + 1, test_fn_list.len, test_fn.name });
+                    std.debug.print("{d}/{d} {s}..." ++ ansi_yellow ++ " - SKIP" ++ ansi_reset ++ "\n", .{ i + 1, test_fn_list.len, test_fn.name });
                 } else {
-                    std.debug.print("SKIP\n", .{});
+                    std.debug.print(ansi_yellow ++ " - SKIP" ++ ansi_reset ++ "\n", .{});
                 }
                 test_node.end();
             },
             else => {
                 fail_count += 1;
                 if (have_tty) {
-                    std.debug.print("{d}/{d} {s}...FAIL ({t})\n", .{
+                    std.debug.print("{d}/{d} {s}..." ++ ansi_red ++ " ✗ FAIL" ++ ansi_reset ++ " ({t})\n", .{
                         i + 1, test_fn_list.len, test_fn.name, err,
                     });
                 } else {
-                    std.debug.print("FAIL ({t})\n", .{err});
+                    std.debug.print(ansi_red ++ " ✗ FAIL" ++ ansi_reset ++ " ({t})\n", .{err});
                 }
                 if (@errorReturnTrace()) |trace| {
                     std.debug.dumpErrorReturnTrace(trace);
@@ -314,7 +323,7 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
     }
     root_node.end();
     if (ok_count == test_fn_list.len) {
-        std.debug.print("All {d} tests passed.\n", .{ok_count});
+        std.debug.print("\n" ++ ansi_green ++ "✓ ALL {d} TESTS PASSED" ++ ansi_reset ++ "\n", .{ok_count});
     } else {
         std.debug.print("{d} passed; {d} skipped; {d} failed.\n", .{ ok_count, skip_count, fail_count });
     }

@@ -250,7 +250,7 @@ pub fn build(b: *std.Build) void {
         "--seed",
         "12345",
         "--output",
-        "json",
+        "quiet",
     });
     test_step.dependOn(&run_stress_validation.step);
 
@@ -273,9 +273,30 @@ pub fn build(b: *std.Build) void {
         "--seed",
         "12345",
         "--output",
-        "json",
+        "quiet",
     });
     test_step.dependOn(&run_threaded_stress_validation.step);
+
+    const run_arena_stress_validation = b.addRunArtifact(stress_exe);
+    run_arena_stress_validation.addArgs(&.{
+        "--allocator",
+        "custom-arena",
+        "--target",
+        "8M",
+        "--max-size",
+        "64K",
+        "--slots",
+        "2048",
+        "--cycles",
+        "2",
+        "--verify",
+        "full",
+        "--seed",
+        "12345",
+        "--output",
+        "quiet",
+    });
+    test_step.dependOn(&run_arena_stress_validation.step);
 }
 
 fn findCFiles(

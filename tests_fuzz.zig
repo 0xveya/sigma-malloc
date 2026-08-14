@@ -35,7 +35,7 @@ fn sizeFromSmith(smith: *std.testing.Smith) usize {
 fn freeAll(slots: []?Slot) void {
     for (slots) |*slot| {
         if (slot.*) |s| {
-            c.cock(s.ptr);
+            c.sigma_free(&c.sigma_test_allocator, s.ptr);
             slot.* = null;
         }
     }
@@ -45,10 +45,11 @@ test "fuzz: allocator single allocation sizes" {
     try std.testing.fuzz({}, struct {
         fn fuzzOne(_: void, smith: *std.testing.Smith) anyerror!void {
             const size = sizeFromSmith(smith);
-            const ptr = c.balls_backend(size) orelse return;
-            try std.testing.expectEqual(@as(usize, 0), @intFromPtr(ptr) % @alignOf(usize));
+            const alignment: usize = @as(usize, 1) << smith.valueRangeAtMost(u4, 3, 12);
+            const ptr = c.sigma_alloc(&c.sigma_test_allocator, size, alignment) orelse return;
+            try std.testing.expectEqual(@as(usize, 0), @intFromPtr(ptr) % alignment);
             fillEdges(ptr, size, smith.value(u8));
-            c.cock(ptr);
+            c.sigma_free(&c.sigma_test_allocator, ptr);
         }
     }.fuzzOne, .{
         .corpus = &.{
@@ -73,7 +74,7 @@ test "fuzz: allocator single threaded operation sequences" {
                 switch (op) {
                     0 => {
                         if (slots[slot_index]) |slot| {
-                            c.cock(slot.ptr);
+                            c.sigma_free(&c.sigma_test_allocator, slot.ptr);
                             slots[slot_index] = null;
                         }
                     },
@@ -84,15 +85,25 @@ test "fuzz: allocator single threaded operation sequences" {
                     },
                     else => {
                         if (slots[slot_index]) |slot| {
-                            c.cock(slot.ptr);
+                            c.sigma_free(&c.sigma_test_allocator, slot.ptr);
                             slots[slot_index] = null;
                         }
 
                         const size = sizeFromSmith(smith);
-                        if (c.balls_backend(size)) |ptr| {
+                        if (c.sigma_alloc(&c.sigma_test_allocator, size, @alignOf(usize))) |ptr| {
                             try std.testing.expectEqual(@as(usize, 0), @intFromPtr(ptr) % @alignOf(usize));
                             fillEdges(ptr, size, smith.value(u8));
-                            slots[slot_index] = .{ .ptr = ptr, .size = size };
+                            if (size > 1 and smith.value(bool)) {
+                                const new_size = size + size / 2;
+                                if (c.sigma_realloc(&c.sigma_test_allocator, ptr, size, new_size, @alignOf(usize))) |grown| {
+                                    fillEdges(grown, new_size, smith.value(u8));
+                                    slots[slot_index] = .{ .ptr = grown, .size = new_size };
+                                } else {
+                                    slots[slot_index] = .{ .ptr = ptr, .size = size };
+                                }
+                            } else {
+                                slots[slot_index] = .{ .ptr = ptr, .size = size };
+                            }
                         }
                     },
                 }
