@@ -7,12 +7,7 @@
 #define ANSI_BOLD "\x1b[1m"
 #define ANSI_RESET "\x1b[0m"
 
-typedef enum {
-  READ_SUCCESS,
-  READ_EOF,
-  READ_IO_ERROR,
-  READ_LINE_NOT_FOUND
-} ReadStatus;
+typedef enum { READ_SUCCESS, READ_IO_ERROR, READ_LINE_NOT_FOUND } ReadStatus;
 
 // i should have the balls to use my own malloc in my malloc
 typedef struct {
@@ -21,33 +16,7 @@ typedef struct {
   char type[64];
 } StackLineResult;
 
-typedef struct {
-  ReadStatus status;
-  char *type;
-
-  union {
-    char *line;
-    i32 os_errno;
-  } value;
-} ReadLineResult;
-
-static inline void sigma_defer_cleanup(void (^*block)(void)) {
-  if (*block) {
-    (*block)();
-  }
-}
-
-// defer macro using clang blocks extension
-#define defer_concat(a, b) a##b
-#define defer_id(a) defer_concat(__defer_blk_, a)
-
-#define defer                                                                  \
-  void (^defer_id(__LINE__))(void)                                             \
-      __attribute__((cleanup(sigma_defer_cleanup))) = ^
-
-static inline void panic(const char *msg) {
+[[noreturn]] static inline void panic(const char *msg) {
+  __builtin_trap();
   fprintf(stderr, "PANIC: %s\n", msg);
-  i32 *ptr = NULL;
-  i32 val = *ptr;
-  (void)val;
 }

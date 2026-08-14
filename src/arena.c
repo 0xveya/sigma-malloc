@@ -1,12 +1,16 @@
 #include "../include/arena.h"
-#include "../include/utils.h"
 #include "../include/sigma_malloc.h"
+#include "../include/utils.h"
+#include "../include/utils/bzero.h"
 
 #include <stdatomic.h>
 #include <stdbool.h>
-#include <string.h>
 
-static _Thread_local arena_t *g_thread_arena = NULL;
+static _Thread_local arena_t *g_thread_arenas = NULL;
+
+static arena_t *arena_create(sigma_allocator_t *allocator);
+static bool arena_expand(arena_t *arena);
+static void arena_drain_remote_frees(arena_t *arena);
 
 void *arena_alloc_slab_region(arena_t *arena, arena_extent_t **out_extent) {
   if (arena == NULL) {
@@ -16,7 +20,7 @@ void *arena_alloc_slab_region(arena_t *arena, arena_extent_t **out_extent) {
   arena_extent_t *extent = arena->active_extent;
 
   if (extent != NULL) {
-    void *ptr = buddy_alloc(&extent->buddy, SLAB_SIZE);
+    void *ptr = buddy_alloc(&extent->buddy, SLAB_SIZE, _Alignof(max_align_t));
 
     if (ptr != NULL) {
       buddy_header_t *header = SIGMA_CONTAINER_OF(alloc_header_from_user(ptr),
@@ -35,7 +39,7 @@ void *arena_alloc_slab_region(arena_t *arena, arena_extent_t **out_extent) {
       continue;
     }
 
-    void *ptr = buddy_alloc(&extent->buddy, SLAB_SIZE);
+    void *ptr = buddy_alloc(&extent->buddy, SLAB_SIZE, _Alignof(max_align_t));
 
     if (ptr != NULL) {
       arena->active_extent = extent;
@@ -57,7 +61,7 @@ void *arena_alloc_slab_region(arena_t *arena, arena_extent_t **out_extent) {
 
   extent = arena->active_extent;
 
-  void *ptr = buddy_alloc(&extent->buddy, SLAB_SIZE);
+  void *ptr = buddy_alloc(&extent->buddy, SLAB_SIZE, _Alignof(max_align_t));
 
   if (ptr != NULL && out_extent != NULL) {
     *out_extent = extent;
@@ -71,20 +75,21 @@ void *arena_alloc_slab_region(arena_t *arena, arena_extent_t **out_extent) {
   return ptr;
 }
 
-void *arena_alloc_buddy_region(arena_t *arena, usize size) {
+void *arena_alloc_buddy_region(arena_t *arena, usize size, usize alignment) {
   if (arena == NULL) {
     return NULL;
   }
 
   arena_extent_t *extent = arena->active_extent;
-  void *ptr = extent == NULL ? NULL : buddy_alloc(&extent->buddy, size);
+  void *ptr =
+      extent == NULL ? NULL : buddy_alloc(&extent->buddy, size, alignment);
 
   if (ptr == NULL) {
     for (extent = arena->extents; extent != NULL; extent = extent->next) {
       if (extent == arena->active_extent) {
         continue;
       }
-      ptr = buddy_alloc(&extent->buddy, size);
+      ptr = buddy_alloc(&extent->buddy, size, alignment);
       if (ptr != NULL) {
         arena->active_extent = extent;
         break;
@@ -93,7 +98,7 @@ void *arena_alloc_buddy_region(arena_t *arena, usize size) {
   }
 
   if (ptr == NULL && arena_expand(arena)) {
-    ptr = buddy_alloc(&arena->active_extent->buddy, size);
+    ptr = buddy_alloc(&arena->active_extent->buddy, size, alignment);
   }
   if (ptr != NULL) {
     alloc_header_t *alloc_header = alloc_header_from_user(ptr);
@@ -104,22 +109,33 @@ void *arena_alloc_buddy_region(arena_t *arena, usize size) {
   return ptr;
 }
 
-arena_t *arena_get_existing(void) { return g_thread_arena; }
-
-arena_t *arena_get(void) {
-  if (g_thread_arena != NULL) {
-    return g_thread_arena;
+arena_t *arena_get_existing(sigma_allocator_t *allocator) {
+  for (arena_t *arena = g_thread_arenas; arena != NULL;
+       arena = arena->thread_next) {
+    if (arena->allocator == allocator)
+      return arena;
   }
+  return NULL;
+}
 
-  g_thread_arena = arena_create();
-  return g_thread_arena;
+arena_t *arena_get(sigma_allocator_t *allocator) {
+  arena_t *arena = arena_get_existing(allocator);
+  if (arena != NULL)
+    return arena;
+
+  arena = arena_create(allocator);
+  if (arena != NULL) {
+    arena->thread_next = g_thread_arenas;
+    g_thread_arenas = arena;
+  }
+  return arena;
 }
 
 static usize align_up_page(usize size) {
   return (size + (usize)PAGE_SIZE - 1) & ~((usize)PAGE_SIZE - 1);
 }
 
-bool arena_expand(arena_t *arena) {
+static bool arena_expand(arena_t *arena) {
   if (arena == NULL) {
     return false;
   }
@@ -127,20 +143,21 @@ bool arena_expand(arena_t *arena) {
   usize metadata_size = align_up_page(sizeof(arena_extent_t));
   usize mapping_size = metadata_size + ARENA_EXTENT_SIZE;
 
-  void *mapping =
-      g_alloc.source->alloc(g_alloc.source->ctx, mapping_size, PAGE_SIZE);
+  void *mapping = arena->allocator->source->alloc(arena->allocator->source->ctx,
+                                                  mapping_size, PAGE_SIZE);
 
   if (!mapping)
     return false;
 
   arena_extent_t *extent = mapping;
-  memset(extent, 0, sizeof(*extent));
+  fill_zero(extent, sizeof(*extent));
 
   void *buddy_memory = (unsigned char *)mapping + metadata_size;
 
   if (buddy_pool_create(&extent->buddy, buddy_memory, ARENA_EXTENT_SIZE) ==
       NULL) {
-    g_alloc.source->free(g_alloc.source->ctx, mapping, mapping_size);
+    arena->allocator->source->free(arena->allocator->source->ctx, mapping,
+                                   mapping_size);
     return false;
   }
   extent->mapping = mapping;
@@ -153,25 +170,27 @@ bool arena_expand(arena_t *arena) {
   return true;
 }
 
-arena_t *arena_create(void) {
+static arena_t *arena_create(sigma_allocator_t *allocator) {
+  if (allocator == NULL || allocator->source == NULL)
+    return NULL;
+
   usize mapping_size = align_up_page(sizeof(arena_t));
   void *mapping =
-      g_alloc.source->alloc(g_alloc.source->ctx, mapping_size, PAGE_SIZE);
+      allocator->source->alloc(allocator->source->ctx, mapping_size, PAGE_SIZE);
 
   if (mapping == NULL) {
     return NULL;
   }
   arena_t *arena = mapping;
-  memset(arena, 0, sizeof(arena_t));
+  fill_zero(arena, sizeof(arena_t));
+  arena->allocator = allocator;
   for (usize i = 0; i < NUM_CACHES; i++) {
     arena->caches[i].obj_size = g_size_classes[i];
   }
 
   atomic_init(&arena->remote_frees, NULL);
-  arena->active = true;
-
   if (!arena_expand(arena)) {
-    g_alloc.source->free(g_alloc.source->ctx, mapping, mapping_size);
+    allocator->source->free(allocator->source->ctx, mapping, mapping_size);
     return NULL;
   }
 
@@ -234,7 +253,7 @@ void arena_remote_free(arena_t *arena, void *ptr) {
 #endif
 }
 
-void arena_drain_remote_frees(arena_t *arena) {
+static void arena_drain_remote_frees(arena_t *arena) {
   if (arena == NULL) {
     return;
   }
@@ -256,8 +275,9 @@ void arena_drain_remote_frees(arena_t *arena) {
   }
 }
 
-void *arena_alloc(arena_t *arena, usize size) {
-  if (arena == NULL || size == 0 || size > MAX_SLAB_OBJ_SIZE) {
+void *arena_alloc(arena_t *arena, usize size, usize alignment) {
+  if (arena == NULL || size == 0 || size > MAX_SLAB_OBJ_SIZE ||
+      !sigma_alignment_is_valid(alignment) || alignment > SLAB_MAX_ALIGNMENT) {
     return NULL;
   }
 
@@ -273,6 +293,7 @@ void *arena_alloc(arena_t *arena, usize size) {
 #if SIGMA_DEBUG
     arena->allocation_count++;
 #endif
+    sigma_debug_forget_freed(ptr);
     return ptr;
   }
 
@@ -283,11 +304,14 @@ void *arena_alloc(arena_t *arena, usize size) {
 
   ptr = slab_alloc(arena, size);
 
+  if (ptr == NULL)
+    return NULL;
+
 #if SIGMA_DEBUG
-  if (ptr != NULL) {
-    arena->allocation_count++;
-  }
+  arena->allocation_count++;
 #endif
+
+  sigma_debug_forget_freed(ptr);
 
   return ptr;
 }

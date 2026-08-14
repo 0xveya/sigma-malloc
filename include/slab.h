@@ -9,6 +9,7 @@
 #define SLAB_SIZE (PAGE_SIZE * 4)
 
 #define MAX_SLAB_OBJ_SIZE 1024
+#define SLAB_MAX_ALIGNMENT _Alignof(max_align_t)
 #define NUM_CACHES 8
 
 typedef struct arena arena_t;
@@ -42,7 +43,6 @@ typedef struct cache {
 
   slab_t *partial;
   slab_t *full;
-  slab_t *empty;
 } cache_t;
 
 // slab = one mmap region

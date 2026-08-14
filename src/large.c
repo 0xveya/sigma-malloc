@@ -3,12 +3,12 @@
 #include "../include/qol.h"
 #include "../include/sigma_malloc.h"
 #include "../include/slab.h"
+#include "../include/utils.h"
 
 #include <stddef.h>
 #if SIGMA_DEBUG
 #include <pthread.h>
 #endif
-#include <unistd.h>
 
 #if SIGMA_DEBUG
 static pthread_mutex_t g_large_debug_list_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -25,78 +25,85 @@ void large_debug_list_lock(void) {}
 void large_debug_list_unlock(void) {}
 #endif
 
-void *large_alloc(usize size) {
-  usize total_size =
-      size + offsetof(large_header_t, header) + sizeof(alloc_header_t);
-
-  isize system_page_size = sysconf(_SC_PAGESIZE);
-  if (system_page_size <= 0)
+void *large_alloc(sigma_allocator_t *allocator, usize size, usize alignment) {
+  if (allocator == NULL || allocator->source == NULL || size == 0 ||
+      !sigma_alignment_is_valid(alignment) ||
+      size > SIZE_MAX - sizeof(large_header_t) - (alignment - 1))
     return NULL;
 
-  usize page_size = (usize)system_page_size;
+  usize total_size = size + sizeof(large_header_t) + alignment - 1;
+  usize page_size = PAGE_SIZE;
   usize aligned_size = (total_size + page_size - 1) & ~(page_size - 1);
 
   void *backing =
-      g_alloc.source->alloc(g_alloc.source->ctx, aligned_size, page_size);
+      allocator->source->alloc(allocator->source->ctx, aligned_size, page_size);
 
   if (backing == NULL)
     return NULL;
 
-  arena_t *arena = arena_get();
+  arena_t *arena = arena_get(allocator);
   if (arena == NULL) {
-    g_alloc.source->free(g_alloc.source->ctx, backing, aligned_size);
+    allocator->source->free(allocator->source->ctx, backing, aligned_size);
     return NULL;
   }
 
-  large_node_t *node = (large_node_t *)arena_alloc(arena, sizeof(*node));
+  large_node_t *node =
+      (large_node_t *)arena_alloc(arena, sizeof(*node), _Alignof(large_node_t));
 
-  large_metadata_t *meta =
-      (large_metadata_t *)arena_alloc(arena, sizeof(*meta));
+  large_metadata_t *meta = (large_metadata_t *)arena_alloc(
+      arena, sizeof(*meta), _Alignof(large_metadata_t));
 
   if (!node || !meta) {
     if (node)
-      cock(node);
+      sigma_free(allocator, node);
 
     if (meta)
-      cock(meta);
+      sigma_free(allocator, meta);
 
-    g_alloc.source->free(g_alloc.source->ctx, backing, aligned_size);
+    allocator->source->free(allocator->source->ctx, backing, aligned_size);
 
     return NULL;
   }
 
   node->backing = backing;
   node->backing_size = aligned_size;
+  node->allocator = allocator;
 
   meta->node = node;
   meta->alloc_file = NULL;
   meta->alloc_func = NULL;
   meta->alloc_line = 0;
 
-  large_header_t *header = (large_header_t *)backing;
+  uptr user_address =
+      ALIGN_UP((uptr)backing + sizeof(large_header_t), alignment);
+  large_header_t *header =
+      (large_header_t *)(user_address - sizeof(large_header_t));
+  node->user = (void *)user_address;
 
   header->meta = meta;
   header->header.magic = LARGE_MAGIC;
   header->header.type = ALLOC_TYPE_LARGE;
+  header->header.requested_size = size;
+  header->header.alignment = alignment;
 
 #if SIGMA_DEBUG
   large_debug_list_lock();
 
   node->prev = NULL;
-  node->next = g_alloc.large_allocs_head;
+  node->next = allocator->large_allocs_head;
 
-  if (g_alloc.large_allocs_head) {
-    g_alloc.large_allocs_head->prev = node;
+  if (allocator->large_allocs_head) {
+    allocator->large_allocs_head->prev = node;
   }
 
-  g_alloc.large_allocs_head = node;
+  allocator->large_allocs_head = node;
 
   large_debug_list_unlock();
 #endif
 
-  return (void *)((u8 *)&header->header + sizeof(alloc_header_t));
+  return (void *)user_address;
 }
-void large_free(void *ptr) {
+void large_free(sigma_allocator_t *allocator, void *ptr) {
   if (!ptr)
     return;
 
@@ -107,13 +114,16 @@ void large_free(void *ptr) {
   large_metadata_t *meta = header->meta;
   large_node_t *node = meta->node;
 
+  if (node->allocator != allocator)
+    panic("large_free: allocation belongs to another allocator");
+
 #if SIGMA_DEBUG
   large_debug_list_lock();
 
   if (node->prev) {
     node->prev->next = node->next;
   } else {
-    g_alloc.large_allocs_head = node->next;
+    allocator->large_allocs_head = node->next;
   }
 
   if (node->next) {
@@ -130,8 +140,8 @@ void large_free(void *ptr) {
   void *backing = node->backing;
   usize backing_size = node->backing_size;
 
-  cock(meta);
-  cock(node);
+  sigma_free(allocator, meta);
+  sigma_free(allocator, node);
 
-  g_alloc.source->free(g_alloc.source->ctx, backing, backing_size);
+  allocator->source->free(allocator->source->ctx, backing, backing_size);
 }

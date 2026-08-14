@@ -18,7 +18,13 @@ typedef enum {
 typedef struct __attribute__((aligned(sizeof(void *)))) alloc_header {
   u8 magic;
   alloc_type_t type;
+  usize requested_size;
+  usize alignment;
 } alloc_header_t;
+
+static inline bool sigma_alignment_is_valid(usize alignment) {
+  return alignment != 0 && (alignment & (alignment - 1)) == 0;
+}
 
 static inline alloc_header_t *alloc_header_from_user(void *ptr) {
   return (alloc_header_t *)((u8 *)ptr - sizeof(alloc_header_t));

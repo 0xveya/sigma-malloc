@@ -46,9 +46,13 @@ buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
   return pool;
 }
 
-static inline usize size_to_order(usize size) {
+static inline usize size_to_order(usize size, usize alignment) {
+  if (size >
+      SIZE_MAX - sizeof(void *) - sizeof(buddy_header_t) - (alignment - 1))
+    return BUDDY_NUM_ORDERS;
+
   usize total_size =
-      size + offsetof(buddy_header_t, header) + sizeof(alloc_header_t);
+      size + sizeof(void *) + sizeof(buddy_header_t) + alignment - 1;
 
   if (total_size <= PAGE_SIZE) {
     return 0;
@@ -140,31 +144,11 @@ static inline void list_push(buddy_block_t **head, buddy_block_t *block) {
   *head = block;
 }
 
-void *buddy_alloc_internal(buddy_pool_t *pool, usize size, const char *file,
-                           const char *func, i32 line) {
-  void *ptr = buddy_alloc(pool, size);
-
-  if (!ptr)
+void *buddy_alloc(buddy_pool_t *pool, usize size, usize alignment) {
+  if (pool == NULL || size == 0 || !sigma_alignment_is_valid(alignment))
     return NULL;
 
-#if SIGMA_DEBUG
-  alloc_header_t *ah = alloc_header_from_user(ptr);
-  buddy_header_t *hdr = SIGMA_CONTAINER_OF(ah, buddy_header_t, header);
-
-  hdr->alloc_file = file;
-  hdr->alloc_func = func;
-  hdr->alloc_line = line;
-#else
-  (void)file;
-  (void)func;
-  (void)line;
-#endif
-
-  return ptr;
-}
-
-void *buddy_alloc(buddy_pool_t *pool, usize size) {
-  var target_order = size_to_order(size);
+  var target_order = size_to_order(size, alignment);
 
   if (target_order >= BUDDY_NUM_ORDERS) {
     return NULL;
@@ -204,15 +188,21 @@ void *buddy_alloc(buddy_pool_t *pool, usize size) {
   var final_node = ptr_to_node_index(pool, block, target_order);
   node_mark_full(pool, final_node);
 
-  buddy_header_t *header = (buddy_header_t *)block;
+  uptr user_address = ALIGN_UP(
+      (uptr)block + sizeof(void *) + sizeof(buddy_header_t), alignment);
+  buddy_header_t *header = (buddy_header_t *)(user_address - sizeof(*header));
+  *(buddy_header_t **)block = header;
   header->order = (u8)target_order;
   header->arena = NULL;
   header->pool = pool;
+  header->block = block;
   header->is_slab_region = false;
   header->header.magic = BUDDY_MAGIC;
   header->header.type = ALLOC_TYPE_BUDDY;
+  header->header.requested_size = size;
+  header->header.alignment = alignment;
 
-  return (void *)((u8 *)&header->header + sizeof(alloc_header_t));
+  return (void *)user_address;
 }
 
 void buddy_free(buddy_pool_t *pool, void *pp) {
@@ -238,9 +228,9 @@ void buddy_free(buddy_pool_t *pool, void *pp) {
   hdr->alloc_line = 0;
 #endif
 
-  usize node_index = ptr_to_node_index(pool, hdr, order);
+  usize node_index = ptr_to_node_index(pool, hdr->block, order);
   node_mark_free(pool, node_index);
-  buddy_block_t *block = (buddy_block_t *)hdr;
+  buddy_block_t *block = hdr->block;
 
   while (order < BUDDY_NUM_ORDERS - 1) {
     usize buddy = node_buddy(node_index);

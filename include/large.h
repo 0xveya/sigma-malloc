@@ -9,6 +9,8 @@ typedef struct large_node {
 
   void *backing;
   usize backing_size;
+  struct sigma_allocator *allocator;
+  void *user;
 } large_node_t;
 
 typedef struct large_metadata {
@@ -23,7 +25,9 @@ typedef struct large_header {
   alloc_header_t header;
 } large_header_t;
 
-void *large_alloc(usize size);
+typedef struct sigma_allocator sigma_allocator_t;
+
+void *large_alloc(sigma_allocator_t *allocator, usize size, usize alignment);
 void large_debug_list_lock(void);
 void large_debug_list_unlock(void);
-void large_free(void *ptr);
+void large_free(sigma_allocator_t *allocator, void *ptr);

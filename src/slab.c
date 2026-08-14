@@ -1,9 +1,9 @@
 #include "../include/slab.h"
 #include "../include/arena.h"
 #include "../include/utils.h"
+#include "../include/utils/bzero.h"
 
 #include <stddef.h>
-#include <string.h>
 
 const usize g_size_classes[NUM_CACHES] = {16, 32, 64, 128, 256, 512, 768, 1024};
 
@@ -46,17 +46,17 @@ static slab_t *slab_create(arena_t *arena, cache_t *cache) {
     return NULL;
   }
 
-  usize data_size = ALIGN_UP(cache->obj_size, sizeof(void *));
-  usize user_offset = offsetof(obj_header_t, header) + sizeof(alloc_header_t);
+  usize data_size = ALIGN_UP(cache->obj_size, SLAB_MAX_ALIGNMENT);
+  usize user_offset = ALIGN_UP(sizeof(obj_header_t), SLAB_MAX_ALIGNMENT);
   usize slot_size = user_offset + data_size;
   slab_t *slab = region;
-  memset(slab, 0, sizeof(*slab));
+  fill_zero(slab, sizeof(*slab));
 
   slab->arena = arena;
   slab->extent = extent;
   slab->owner = cache;
 
-  u8 *obj_start = (u8 *)slab + ALIGN_UP(sizeof(*slab), sizeof(void *));
+  u8 *obj_start = (u8 *)slab + ALIGN_UP(sizeof(*slab), SLAB_MAX_ALIGNMENT);
   usize usable = SLAB_SIZE - (usize)(obj_start - (u8 *)slab);
   slab->capacity = usable / slot_size;
   if (slab->capacity == 0) {
@@ -70,6 +70,8 @@ static slab_t *slab_create(arena_t *arena, cache_t *cache) {
     header->slab = slab;
     header->header.magic = SLAB_MAGIC;
     header->header.type = ALLOC_TYPE_SLAB;
+    header->header.requested_size = 0;
+    header->header.alignment = 0;
 #if SIGMA_DEBUG
     header->alloc_file = NULL;
     header->alloc_func = NULL;
@@ -104,6 +106,7 @@ void *slab_alloc(arena_t *arena, usize size) {
   header->slab = slab;
   alloc_header->magic = SLAB_MAGIC;
   alloc_header->type = ALLOC_TYPE_SLAB;
+  alloc_header->requested_size = size;
   slab->used++;
 
   if (slab->used == slab->capacity) {

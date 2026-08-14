@@ -11,6 +11,7 @@
 
 typedef struct arena arena_t;
 typedef struct arena_extent arena_extent_t;
+typedef struct sigma_allocator sigma_allocator_t;
 
 typedef struct remote_free_node {
   struct remote_free_node *next;
@@ -26,6 +27,9 @@ struct arena_extent {
 };
 
 struct arena {
+  sigma_allocator_t *allocator;
+  arena_t *thread_next;
+
   cache_t caches[NUM_CACHES];
 
   arena_extent_t *extents;
@@ -34,8 +38,6 @@ struct arena {
   _Atomic(remote_free_node_t *) remote_frees;
 
   usize alloc_counter;
-  bool active;
-
 #if SIGMA_DEBUG
   usize allocation_count;
   usize free_count;
@@ -43,19 +45,15 @@ struct arena {
 #endif
 };
 
-arena_t *arena_get(void);
-arena_t *arena_get_existing(void);
+arena_t *arena_get(sigma_allocator_t *allocator);
+arena_t *arena_get_existing(sigma_allocator_t *allocator);
 
-arena_t *arena_create(void);
-bool arena_expand(arena_t *arena);
-
-void *arena_alloc(arena_t *arena, usize size);
+void *arena_alloc(arena_t *arena, usize size, usize alignment);
 void arena_free_buddy_local(arena_t *arena, void *ptr);
 void arena_free_local(arena_t *arena, void *ptr);
 
-void *arena_alloc_buddy_region(arena_t *arena, usize size);
+void *arena_alloc_buddy_region(arena_t *arena, usize size, usize alignment);
 void *arena_alloc_slab_region(arena_t *arena, arena_extent_t **out_extent);
-void arena_drain_remote_frees(arena_t *arena);
 void arena_remote_free(arena_t *arena, void *ptr);
 
 void arena_free_slab_region(arena_t *arena, arena_extent_t *extent, void *ptr);

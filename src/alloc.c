@@ -1,15 +1,14 @@
 #include "../include/arena.h"
 #include "../include/debug.h"
 #include "../include/large.h"
+#include "../include/memory_source.h"
 #include "../include/sigma_malloc.h"
 #include "../include/slab.h"
-#include "../include/memory_source.h"
 #include <stddef.h>
 
-allocator_t g_alloc = {
+sigma_allocator_t g_alloc = {
     .initialized = true,
     .is_debug = SIGMA_DEBUG,
-
 #ifdef SIGMA_MALLOC_BACKEND
     .source = &malloc_memory_source,
 #else
@@ -17,9 +16,15 @@ allocator_t g_alloc = {
 #endif
 };
 
-void *balls_debug_backend(usize size, const char *file, const char *func,
-                          i32 line) {
-  void *ptr = balls_backend(size);
+static void *finish_alloc(void *ptr) {
+  if (ptr != NULL)
+    sigma_debug_forget_freed(ptr);
+  return ptr;
+}
+
+void *sigma_alloc_debug(sigma_allocator_t *sigma, usize size, usize alignment,
+                        const char *file, const char *func, i32 line) {
+  void *ptr = sigma_alloc(sigma, size, alignment);
 
   if (!ptr)
     return NULL;
@@ -49,25 +54,41 @@ void *balls_debug_backend(usize size, const char *file, const char *func,
 }
 
 void *balls_backend(usize size) {
-  if (size <= MAX_SLAB_OBJ_SIZE) {
-    arena_t *arena = arena_get();
+  return sigma_alloc(&g_alloc, size, _Alignof(max_align_t));
+}
+
+void *balls_debug_backend(usize size, const char *file, const char *func,
+                          i32 line) {
+  return sigma_alloc_debug(&g_alloc, size, _Alignof(max_align_t), file, func,
+                           line);
+}
+
+void *sigma_alloc(sigma_allocator_t *sigma, usize size, usize alignment) {
+  if (sigma == NULL || !sigma->initialized || sigma->source == NULL ||
+      size == 0 || !sigma_alignment_is_valid(alignment))
+    return NULL;
+
+  if (size <= MAX_SLAB_OBJ_SIZE && alignment <= SLAB_MAX_ALIGNMENT) {
+    arena_t *arena = arena_get(sigma);
     if (arena == NULL) {
       return NULL;
     }
-    return arena_alloc(arena, size);
+    void *ptr = arena_alloc(arena, size, alignment);
+    if (ptr != NULL)
+      alloc_header_from_user(ptr)->alignment = alignment;
+    return finish_alloc(ptr);
   }
 
-  if (size <= BUDDY_POOL_SIZE - offsetof(buddy_header_t, header) -
-                  sizeof(alloc_header_t)) {
-    arena_t *arena = arena_get();
+  if (size <= BUDDY_POOL_SIZE && alignment <= BUDDY_POOL_SIZE) {
+    arena_t *arena = arena_get(sigma);
     if (arena == NULL) {
       return NULL;
     }
-    void *ptr = arena_alloc_buddy_region(arena, size);
+    void *ptr = arena_alloc_buddy_region(arena, size, alignment);
     if (ptr != NULL) {
-      return ptr;
+      return finish_alloc(ptr);
     }
   }
 
-  return large_alloc(size);
+  return finish_alloc(large_alloc(sigma, size, alignment));
 }

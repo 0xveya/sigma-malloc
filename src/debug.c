@@ -4,10 +4,16 @@
 #include "../include/sigma_malloc.h"
 #include "../include/slab.h"
 #include "../include/utils.h"
+#include "../include/utils/bzero.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+#define MAX_LEAKS 4096
+
+static LeakInfo g_leaks[MAX_LEAKS];
+static usize g_leak_count;
 
 #if SIGMA_DEBUG
 static bool is_ptr_in_freelist(free_node_t *head, void *ptr) {
@@ -20,7 +26,7 @@ static bool is_ptr_in_freelist(free_node_t *head, void *ptr) {
 }
 #endif
 
-StackLineResult get_leak_line(const char *filename, i32 linenum) {
+static StackLineResult get_leak_line(const char *filename, i32 linenum) {
   StackLineResult result;
   result.line[0] = '\0';
 
@@ -99,22 +105,72 @@ static void format_readable_size(char *buf, usize buf_size, usize bytes) {
   }
 }
 
-void leak_push(LeakResult r) {
+static void leak_push(LeakInfo info) {
   if (g_leak_count < MAX_LEAKS)
-    g_leaks[g_leak_count++] = r;
+    g_leaks[g_leak_count++] = info;
 }
 
 int sigma_debug_enabled(void) { return SIGMA_DEBUG; }
 
 void sigma_debug_reset_leaks(void) {
   g_leak_count = 0;
-  memset(g_leaks, 0, sizeof(g_leaks));
+  fill_zero(g_leaks, sizeof(g_leaks));
 }
 
 usize sigma_debug_leak_count(void) { return g_leak_count; }
 
+bool sigma_debug_leak_info(usize index, LeakInfo *out) {
+  if (out == NULL || index >= g_leak_count)
+    return false;
+  *out = g_leaks[index];
+  return true;
+}
+
+bool sigma_debug_allocation_info(void *ptr, LeakInfo *out) {
+  if (ptr == NULL || out == NULL)
+    return false;
+
 #if SIGMA_DEBUG
-static void collect_slab_leaks(arena_t *arena) {
+  alloc_header_t *alloc = alloc_header_from_user(ptr);
+  const char *file = NULL;
+  const char *func = NULL;
+  i32 line = 0;
+
+  if (alloc->type == ALLOC_TYPE_SLAB) {
+    obj_header_t *header = SIGMA_CONTAINER_OF(alloc, obj_header_t, header);
+    file = header->alloc_file;
+    func = header->alloc_func;
+    line = header->alloc_line;
+  } else if (alloc->type == ALLOC_TYPE_BUDDY) {
+    buddy_header_t *header = SIGMA_CONTAINER_OF(alloc, buddy_header_t, header);
+    file = header->alloc_file;
+    func = header->alloc_func;
+    line = header->alloc_line;
+  } else if (alloc->type == ALLOC_TYPE_LARGE) {
+    large_header_t *header = SIGMA_CONTAINER_OF(alloc, large_header_t, header);
+    file = header->meta->alloc_file;
+    func = header->meta->alloc_func;
+    line = header->meta->alloc_line;
+  } else {
+    return false;
+  }
+
+  *out = (LeakInfo){
+      .file = file,
+      .func = func,
+      .line = line,
+      .size = alloc->requested_size,
+  };
+  return true;
+#else
+  (void)ptr;
+  (void)out;
+  return false;
+#endif
+}
+
+#if SIGMA_DEBUG
+static void collect_slab_leaks(sigma_allocator_t *sigma, arena_t *arena) {
   if (arena == NULL) {
     return;
   }
@@ -125,11 +181,11 @@ static void collect_slab_leaks(arena_t *arena) {
     for (i32 s_idx = 0; s_idx < 2; s_idx++) {
       slab_t *slab = slabs_to_check[s_idx];
       while (slab) {
-        u8 *obj_start = (u8 *)slab + ALIGN_UP(sizeof(slab_t), sizeof(void *));
-        usize user_offset =
-            offsetof(obj_header_t, header) + sizeof(alloc_header_t);
+        u8 *obj_start =
+            (u8 *)slab + ALIGN_UP(sizeof(slab_t), SLAB_MAX_ALIGNMENT);
+        usize user_offset = ALIGN_UP(sizeof(obj_header_t), SLAB_MAX_ALIGNMENT);
         usize slot_size =
-            user_offset + ALIGN_UP(cache->obj_size, sizeof(void *));
+            user_offset + ALIGN_UP(cache->obj_size, SLAB_MAX_ALIGNMENT);
 
         for (usize j = 0; j < slab->capacity; j++) {
           u8 *slot = obj_start + j * slot_size;
@@ -138,9 +194,11 @@ static void collect_slab_leaks(arena_t *arena) {
 
           if (!is_ptr_in_freelist(slab->free_list, user)) {
             bool is_large_tracking_infrastructure = false;
-            large_node_t *curr_large = g_alloc.large_allocs_head;
+            large_node_t *curr_large = sigma->large_allocs_head;
             while (curr_large) {
-              large_header_t *lh = (large_header_t *)curr_large->backing;
+              large_header_t *lh =
+                  SIGMA_CONTAINER_OF(alloc_header_from_user(curr_large->user),
+                                     large_header_t, header);
               if ((void *)curr_large == user || (void *)lh->meta == user) {
                 is_large_tracking_infrastructure = true;
                 break;
@@ -151,18 +209,12 @@ static void collect_slab_leaks(arena_t *arena) {
             if (is_large_tracking_infrastructure) {
               continue;
             }
-            const char *file = hdr->alloc_file
-                                   ? (strrchr(hdr->alloc_file, '/')
-                                          ? strrchr(hdr->alloc_file, '/') + 1
-                                          : hdr->alloc_file)
-                                   : NULL;
-            leak_push((LeakResult){.status = RESULT_OK,
-                                   .value.ok = {
-                                       .file = file,
-                                       .func = hdr->alloc_func,
-                                       .line = hdr->alloc_line,
-                                       .size = cache->obj_size,
-                                   }});
+            leak_push((LeakInfo){
+                .file = hdr->alloc_file,
+                .func = hdr->alloc_func,
+                .line = hdr->alloc_line,
+                .size = cache->obj_size,
+            });
           }
         }
         slab = slab->next;
@@ -195,24 +247,16 @@ static void traverse_buddy_nodes(buddy_pool_t *pool, usize index,
 
   if (state == BUDDY_NODE_FULL) {
     void *block_ptr = node_index_to_ptr(pool, index, relative_order);
-    buddy_header_t *hdr = (buddy_header_t *)block_ptr;
+    buddy_header_t *hdr = *(buddy_header_t **)block_ptr;
 
     if (hdr->header.magic == BUDDY_MAGIC && hdr->order == relative_order &&
         !hdr->is_slab_region) {
-      const char *file = hdr->alloc_file
-                             ? (strrchr(hdr->alloc_file, '/')
-                                    ? strrchr(hdr->alloc_file, '/') + 1
-                                    : hdr->alloc_file)
-                             : NULL;
-      leak_push((LeakResult){
-          .status = RESULT_OK,
-          .value.ok = {
-              .file = file,
-              .func = hdr->alloc_func,
-              .line = hdr->alloc_line,
-              .size = (1ULL << (relative_order + BUDDY_MIN_ORDER)) -
-                      offsetof(buddy_header_t, header) - sizeof(alloc_header_t),
-          }});
+      leak_push((LeakInfo){
+          .file = hdr->alloc_file,
+          .func = hdr->alloc_func,
+          .line = hdr->alloc_line,
+          .size = hdr->header.requested_size,
+      });
     }
     return;
   }
@@ -226,7 +270,7 @@ static void traverse_buddy_nodes(buddy_pool_t *pool, usize index,
   }
 }
 
-void collect_buddy_leaks(buddy_pool_t *pool) {
+static void collect_buddy_leaks(buddy_pool_t *pool) {
   if (!pool || !pool->tree)
     return;
 
@@ -243,28 +287,20 @@ static void collect_arena_buddy_leaks(arena_t *arena) {
   }
 }
 
-static void collect_large_leaks(void) {
+static void collect_large_leaks(sigma_allocator_t *sigma) {
   large_debug_list_lock();
-  large_node_t *node = g_alloc.large_allocs_head;
+  large_node_t *node = sigma->large_allocs_head;
   while (node) {
-    large_header_t *header = (large_header_t *)node->backing;
+    large_header_t *header = SIGMA_CONTAINER_OF(
+        alloc_header_from_user(node->user), large_header_t, header);
     large_metadata_t *meta = header->meta;
 
-    const char *file = meta->alloc_file
-                           ? (strrchr(meta->alloc_file, '/')
-                                  ? strrchr(meta->alloc_file, '/') + 1
-                                  : meta->alloc_file)
-                           : NULL;
-
-    leak_push((LeakResult){.status = RESULT_OK,
-                           .value.ok = {
-                               .file = file,
-                               .func = meta->alloc_func,
-                               .line = meta->alloc_line,
-                               .size = node->backing_size -
-                                       offsetof(large_header_t, header) -
-                                       sizeof(alloc_header_t),
-                           }});
+    leak_push((LeakInfo){
+        .file = meta->alloc_file,
+        .func = meta->alloc_func,
+        .line = meta->alloc_line,
+        .size = header->header.requested_size,
+    });
 
     node = node->next;
   }
@@ -273,36 +309,38 @@ static void collect_large_leaks(void) {
 
 #endif
 
-usize sigma_debug_collect_leaks(void) {
+usize sigma_debug_collect_leaks(sigma_allocator_t *sigma) {
   sigma_debug_reset_leaks();
 
 #if SIGMA_DEBUG
-  if (!g_alloc.initialized || !g_alloc.is_debug)
+  if (sigma == NULL || !sigma->initialized || !sigma->is_debug)
     return 0;
 
-  collect_slab_leaks(arena_get_existing());
-  collect_arena_buddy_leaks(arena_get_existing());
-  collect_large_leaks();
+  collect_slab_leaks(sigma, arena_get_existing(sigma));
+  collect_arena_buddy_leaks(arena_get_existing(sigma));
+  collect_large_leaks(sigma);
+#else
+  (void)sigma;
 #endif
 
   return g_leak_count;
 }
 
+void sigma_debug_report_leaks(sigma_allocator_t *sigma) {
 #if SIGMA_DEBUG
-[[gnu::destructor]]
-void show_leak_issues(void) {
-  if (!g_alloc.initialized || !g_alloc.is_debug)
+  if (sigma == NULL || !sigma->initialized || !sigma->is_debug)
     return;
 
-  sigma_debug_collect_leaks();
+  sigma_debug_collect_leaks(sigma);
 
   for (usize i = 0; i < g_leak_count; i++) {
-    LeakResult *r = &g_leaks[i];
-    if (r->status != RESULT_OK)
-      continue;
-
-    LeakInfo *info = &r->value.ok;
+    LeakInfo *info = &g_leaks[i];
     StackLineResult src = get_leak_line(info->file, info->line);
+    const char *display_file = info->file;
+    if (display_file != NULL && strrchr(display_file, '/') != NULL)
+      display_file = strrchr(display_file, '/') + 1;
+    if (display_file == NULL)
+      display_file = "unknown";
     char size_str[32];
     format_readable_size(size_str, sizeof(size_str), info->size);
 
@@ -315,7 +353,8 @@ void show_leak_issues(void) {
             "  " ANSI_BOLD "Location:" ANSI_RESET "   " ANSI_DIM
             "%s:" ANSI_RESET "%d" ANSI_DIM ":" ANSI_RESET " inside " ANSI_BOLD
             "%s" ANSI_RESET "()\n",
-            info->file, info->line, info->func);
+            display_file, info->line,
+            info->func == NULL ? "unknown" : info->func);
     if (src.status == READ_SUCCESS)
       fprintf(stderr, "     " ANSI_DIM "=>" ANSI_RESET " %s\n\n", src.line);
     else
@@ -347,5 +386,7 @@ void show_leak_issues(void) {
     }
 #endif
   }
-}
+#else
+  (void)sigma;
 #endif
+}

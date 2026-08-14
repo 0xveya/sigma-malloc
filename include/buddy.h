@@ -35,6 +35,7 @@ typedef struct buddy_header {
 #endif
   arena_t *arena;
   buddy_pool_t *pool;
+  void *block;
   bool is_slab_region;
   u8 order;
   alloc_header_t header;
@@ -56,19 +57,7 @@ struct buddy_pool {
   void *usable_start;
 };
 
-#if SIGMA_DEBUG
-#define buddy_alloc_debug(pool, size)                                          \
-  buddy_alloc_internal(pool, size, __FILE__, __func__, __LINE__)
-#else
-#define buddy_alloc_debug(pool, size)                                          \
-  buddy_alloc_internal(pool, size, NULL, NULL, 0)
-#endif
-
 buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
                                 usize pool_size);
-void *buddy_alloc_internal(buddy_pool_t *pool, usize size, const char *file,
-                           const char *func, i32 line);
-void *buddy_alloc(buddy_pool_t *pool, usize size);
+void *buddy_alloc(buddy_pool_t *pool, usize size, usize alignment);
 void buddy_free(buddy_pool_t *pool, void *ptr);
-void *buddy_alloc_internal(buddy_pool_t *pool, usize size, const char *file,
-                           const char *func, i32 line);
