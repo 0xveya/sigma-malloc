@@ -1,5 +1,5 @@
 set_project("sigma_malloc")
-set_version("0.2.2")
+set_version("0.2.3")
 set_languages("c23")
 set_toolchains("clang")
 set_toolset("ld", "clang")
@@ -33,7 +33,7 @@ local function configure(target_name)
         add_cflags("-Wno-auto-decl-extensions", "-Wshadow", "-Wconversion", "-Wdouble-promotion", "-Wformat=2", "-Wundef", {force = true})
         add_includedirs("include", {public = true})
         add_packages("sigma_sys", {public = true})
-        add_cflags("-ffreestanding", "-fno-builtin", {force = true})
+        add_cflags("-ffreestanding", "-fno-builtin", "-fno-stack-protector", {force = true})
         if is_mode("debug") then
             add_defines("HORNY_MODE=1", "NO_LEAK_REWARD=1", "USE_DEBUG_ALLOC=1")
         else
