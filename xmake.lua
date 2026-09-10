@@ -22,6 +22,11 @@ option("malloc_backend")
     set_showmenu(true)
 option_end()
 
+option("no_tls")
+    set_default(false)
+    set_showmenu(true)
+option_end()
+
 option("parser_example_free")
     set_default(true)
     set_showmenu(true)
@@ -41,6 +46,9 @@ local function configure(target_name)
         end
         if has_config("malloc_backend") then
             add_defines("SIGMA_MALLOC_BACKEND=1")
+        end
+        if has_config("no_tls") then
+            add_defines("SIGMA_NO_TLS=1")
         end
 end
 
