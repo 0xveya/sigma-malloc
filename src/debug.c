@@ -61,10 +61,10 @@ static StackLineResult get_leak_line(const char *filename, i32 linenum) {
     current_line++;
   }
   result.type[0] = '\0';
-  var *type_start = strstr(result.line, "sizeof(");
+  let *type_start = strstr(result.line, "sizeof(");
   if (type_start) {
     type_start += 7;
-    var *type_end = strchr(type_start, ')');
+    let *type_end = strchr(type_start, ')');
     if (type_end) {
       usize len = (usize)(type_end - type_start);
       if (len >= sizeof(result.type))

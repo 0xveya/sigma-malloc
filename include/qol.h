@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define var auto
+#define let auto
 
 typedef size_t usize;
 typedef ptrdiff_t isize;

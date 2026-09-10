@@ -2,8 +2,6 @@
 #include "../include/qol.h"
 #include "../include/utils.h"
 #include <stddef.h>
-#include <string.h>
-#include <sys/mman.h>
 
 static inline usize floor_log2_usize(usize value) {
   return (usize)((sizeof(usize) * 8U - 1U) - (usize)__builtin_clzl(value));
@@ -28,7 +26,7 @@ buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
   }
 
   pool->tree = (buddy_node_state_t *)raw_mem;
-  var *usable_mem = (void *)((uptr)raw_mem + BUDDY_TREE_SIZE);
+  let *usable_mem = (void *)((uptr)raw_mem + BUDDY_TREE_SIZE);
   usize root_order = BUDDY_NUM_ORDERS - 1;
 
   for (usize i = 0; i < BUDDY_TREE_NODE_COUNT; i++) {
@@ -37,7 +35,7 @@ buddy_pool_t *buddy_pool_create(buddy_pool_t *pool, void *raw_mem,
   pool->tree[0] = BUDDY_NODE_FREE;
 
   pool->usable_start = usable_mem;
-  var *root_block = (buddy_block_t *)usable_mem;
+  let *root_block = (buddy_block_t *)usable_mem;
   root_block->next = NULL;
   root_block->prev = NULL;
 
@@ -148,13 +146,13 @@ void *buddy_alloc(buddy_pool_t *pool, usize size, usize alignment) {
   if (pool == NULL || size == 0 || !sigma_alignment_is_valid(alignment))
     return NULL;
 
-  var target_order = size_to_order(size, alignment);
+  let target_order = size_to_order(size, alignment);
 
   if (target_order >= BUDDY_NUM_ORDERS) {
     return NULL;
   }
 
-  var current_order = target_order;
+  let current_order = target_order;
 
   while (current_order < BUDDY_NUM_ORDERS &&
          pool->free_lists[current_order] == NULL) {
@@ -164,12 +162,12 @@ void *buddy_alloc(buddy_pool_t *pool, usize size, usize alignment) {
   if (current_order == BUDDY_NUM_ORDERS)
     return NULL;
 
-  var *block = pool->free_lists[current_order];
+  let *block = pool->free_lists[current_order];
   list_remove(&pool->free_lists[current_order], block);
 
   while (current_order > target_order) {
 
-    var node_idx = ptr_to_node_index(pool, block, current_order);
+    let node_idx = ptr_to_node_index(pool, block, current_order);
     node_mark_split(pool, node_idx);
 
     current_order--;
@@ -180,12 +178,12 @@ void *buddy_alloc(buddy_pool_t *pool, usize size, usize alignment) {
     node_mark_free(pool, right);
 
     usize block_size = 1ULL << (current_order + BUDDY_MIN_ORDER);
-    var *buddy = (buddy_block_t *)((uptr)block + block_size);
+    let *buddy = (buddy_block_t *)((uptr)block + block_size);
 
     list_push(&pool->free_lists[current_order], buddy);
   }
 
-  var final_node = ptr_to_node_index(pool, block, target_order);
+  let final_node = ptr_to_node_index(pool, block, target_order);
   node_mark_full(pool, final_node);
 
   uptr user_address = ALIGN_UP(

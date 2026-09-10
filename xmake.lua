@@ -1,10 +1,21 @@
 set_project("sigma_malloc")
-set_version("0.1.0")
+set_version("0.2.0")
 set_languages("c23")
 set_toolchains("clang")
 set_toolset("ld", "clang")
 add_rules("mode.debug", "mode.release")
 add_rules("plugin.compile_commands.autoupdate", {outputdir = "."})
+
+package("sigma_sys")
+    set_homepage("https://github.com/0xveya/sigma_libft")
+    set_description("Sigma's typed Linux syscall boundary")
+    add_urls("https://github.com/0xveya/sigma_libft.git")
+    on_install(function (package)
+        import("package.tools.xmake").install(package,
+            {sigma_sys_only = true}, {target = "sigma_sys"})
+    end)
+package_end()
+add_requires("sigma_sys master", {system = false})
 
 option("malloc_backend")
     set_default(false)
@@ -21,6 +32,8 @@ local function configure(target_name)
         set_warnings("all", "extra", "pedantic")
         add_cflags("-Wno-auto-decl-extensions", "-Wshadow", "-Wconversion", "-Wdouble-promotion", "-Wformat=2", "-Wundef", {force = true})
         add_includedirs("include", {public = true})
+        add_packages("sigma_sys", {public = true})
+        add_cflags("-ffreestanding", "-fno-builtin", {force = true})
         if is_mode("debug") then
             add_defines("HORNY_MODE=1", "NO_LEAK_REWARD=1", "USE_DEBUG_ALLOC=1")
         else

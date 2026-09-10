@@ -1,7 +1,7 @@
 #pragma once
 
 #include "qol.h"
-#include <stdio.h>
+#include <sigma/sys.h>
 #define ANSI_RED "\x1b[31m"
 #define ANSI_DIM "\x1b[2m"
 #define ANSI_BOLD "\x1b[1m"
@@ -17,6 +17,12 @@ typedef struct {
 } StackLineResult;
 
 [[noreturn]] static inline void panic(const char *msg) {
-  __builtin_trap();
-  fprintf(stderr, "PANIC: %s\n", msg);
+  static const char prefix[] = "PANIC: ";
+  usize len = 0;
+  while (msg[len] != '\0')
+    len++;
+  (void)s_write(2, prefix, sizeof(prefix) - 1);
+  (void)s_write(2, msg, len);
+  (void)s_write(2, "\n", 1);
+  s_exit(127);
 }
