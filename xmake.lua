@@ -1,5 +1,5 @@
 set_project("sigma_malloc")
-set_version("0.2.1")
+set_version("0.2.2")
 set_languages("c23")
 set_toolchains("clang")
 set_toolset("ld", "clang")
@@ -18,11 +18,6 @@ package_end()
 add_requires("sigma_sys v0.2.0", {system = false})
 
 option("malloc_backend")
-    set_default(false)
-    set_showmenu(true)
-option_end()
-
-option("no_tls")
     set_default(false)
     set_showmenu(true)
 option_end()
@@ -46,9 +41,6 @@ local function configure(target_name)
         end
         if has_config("malloc_backend") then
             add_defines("SIGMA_MALLOC_BACKEND=1")
-        end
-        if has_config("no_tls") then
-            add_defines("SIGMA_NO_TLS=1")
         end
 end
 

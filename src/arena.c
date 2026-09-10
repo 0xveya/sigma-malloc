@@ -6,11 +6,7 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 
-#ifdef SIGMA_NO_TLS
-static arena_t *g_thread_arenas = NULL;
-#else
 static _Thread_local arena_t *g_thread_arenas = NULL;
-#endif
 
 static arena_t *arena_create(sigma_allocator_t *allocator);
 static bool arena_expand(arena_t *arena);
