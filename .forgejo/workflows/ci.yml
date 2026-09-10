@@ -22,7 +22,8 @@ jobs:
 
       - name: Show versions
         run: |
-          mise exec -- zig version
+          mise exec -- clang --version
+          mise exec -- xmake --version
           mise exec -- clang-format --version
           mise exec -- cppcheck --version
 

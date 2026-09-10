@@ -14,7 +14,7 @@ allocation strategy.
 - Slab, buddy, and direct backing-source allocation paths.
 - Power-of-two alignment and typed allocation helpers.
 - Realloc and zeroed allocation without direct allocator-runtime libc calls.
-- A composable Zig-style arena allocator.
+- A composable arena allocator.
 - Leak source locations, wrong-owner errors, and double-free diagnostics in
   debug builds.
 
@@ -73,13 +73,14 @@ result array through the public API, and works with the arena supplied by its
 caller:
 
 ```sh
-zig build parser-example
+xmake run parser-example
 ```
 
 To intentionally leak the parser arena and inspect its allocation source:
 
 ```sh
-zig build parser-example -Dparser-example-free=false
+xmake f --parser_example_free=n -y
+xmake run parser-example
 ```
 
 The debug report points to the user allocation through the composed arena:
@@ -92,17 +93,17 @@ Memory Leak Detected:
 
 ## Build and test
 
-The project uses C23 and Zig 0.16.0, pinned in [`mise.toml`](mise.toml). `mise`
-is optional if the expected Zig toolchain is already installed.
+The project uses C23, Clang, and Xmake, pinned in [`mise.toml`](mise.toml).
+`mise` is optional when those tools are already installed.
 
 ```sh
 mise install
-zig build -Doptimize=Debug
-./zig-out/bin/app-dev
-zig build test
+mise run dev
+mise run dev-run
+mise run test
 ```
 
-`zig build test` runs the regression and fuzz-corpus cases plus quiet
+`mise run test` runs the regression and deterministic fuzz-corpus cases plus quiet
 single-threaded, threaded, and arena stress validations. Successful cases are
 shown as ANSI-colored checkmarks; stress output remains hidden unless a check
 fails.
@@ -110,11 +111,11 @@ fails.
 Other useful commands:
 
 ```sh
-zig build -Doptimize=ReleaseFast
-./zig-out/bin/app
-zig build alloc-fuzz
-make check
-make format
+mise run build
+mise run run
+mise run stress
+mise run check
+mise run format
 ```
 
 ## Stress testing
@@ -125,7 +126,8 @@ JSON, or quiet output. `--target` applies to each worker and is bounded by the
 configured slot count and maximum allocation size.
 
 ```sh
-zig build -Doptimize=ReleaseFast stress -- \
+xmake f -m release -y
+xmake run allocator-stress -- \
   --allocator custom --threads 4 --target 256M --max-size 1M \
   --slots 8192 --cycles 20 --verify full --seed 12345
 ```
@@ -133,9 +135,9 @@ zig build -Doptimize=ReleaseFast stress -- \
 Use the same seed and workload to compare backends:
 
 ```sh
-zig build stress -- --allocator custom --target 256M \
+xmake run allocator-stress -- --allocator custom --target 256M \
   --seed 12345 --output json > custom-results.jsonl
-zig build stress -- --allocator system --target 256M \
+xmake run allocator-stress -- --allocator system --target 256M \
   --seed 12345 --output json > system-results.jsonl
 ```
 
